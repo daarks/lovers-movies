@@ -1,0 +1,59 @@
+Refina a interface visual de todas as áreas do app, mantendo o tema preto profundo + roxo e mobile-first. Não altere fluxos de negócio nem quebre JS/templates existentes; foque em CSS, microajustes de HTML só se forem classes/hooks visuais, e ícones/markup acessível.
+
+Sistema global
+
+Tokens: sombras em camadas, raios de borda consistentes, hierarquia tipográfica (título de página / seção / corpo / meta), estados hover/focus/active/disabled coerentes.
+Fundo: profundidade (gradiente radial ou mesh roxo→preto muito sutil) e, se fizer sentido, noise SVG quase imperceptível para textura.
+Motion: transições curtas (150–300ms), easing suave; respeitar prefers-reduced-motion.
+Links, botões e inputs: mesma “gramática” de borda luminosa roxa + sombra interna leve no focus.
+Header e navegação inferior
+
+Header: separação clara do conteúdo (blur, borda inferior com brilho roxo).
+Bottom nav: aba ativa mais legível (pill, glow ou barra indicadora); ícones mais refinados que emoji puro, alinhados aos labels.
+Assistir (home)
+
+Bloco do typewriter: hierarquia visual de “hero” (espaço, vinheta ou glow discreto).
+Busca: campo como superfície elevada; dropdown de resultados alinhado ao mesmo sistema de sombras/bordas.
+Botão “Sugestões”: destaque primário consistente com o restante.
+Carrosséis (destaques, cinema, estreias, últimos): fade nas bordas, snap claro, cards com hover/active (elevação, sombra no pôster), placeholders harmonizados.
+Histórico
+
+Busca + toolbar “Filtrar”: botão com aparência de controle principal; opcional indicar visualmente “há filtro ativo” sem mudar lógica.
+Modal de filtros: painel com hierarquia (handle visual no mobile, divisores ou fundos por grupo: tipo / gênero / nota); segment control e chips mais “táteis”; área de notas menos pesada (accordion ou grid em telas largas); footer de ações destacado; backdrop com blur.
+Grid de cards: pôster, título e estrelas com contraste e respiro; estado vazio mais cuidadoso tipograficamente.
+Assistir depois
+
+Mesma linha visual do histórico (busca, modal sem bloco de nota, grid); sublinhar diferença só por conteúdo (meta TMDB/ano), não por estilo quebrado.
+Detalhes do título
+
+Hero: backdrop + gradiente mais cinematográfico; pôster com profundidade (sombra, opcional anel de luz roxa).
+Botões fixos (voltar, coleção): glass ou superfície escura consistente.
+Meta (ano, badge, TMDB, classificação): chips ou pills alinhados ao design system.
+Sinopse e “Ver mais”: leitura confortável; créditos em bloco tipo card.
+Formulário (estrelas, textarea, primário/perigo): estados hover/focus e hierarquia clara.
+Ficha técnica
+
+Hero alinhado aos detalhes; seções com títulos e conteúdo em “cards” ou blocos com borda suave.
+Listas horizontais (elenco, imagens): fade nas bordas, thumbs com cantos e borda roxa sutil coerente.
+Links externos e vídeo: contêineres com raio e sombra consistentes.
+Pessoa (ator/diretor)
+
+Hero com foto: sombra e integração ao gradiente; lista de filmografia como linhas ou cards com hover uniforme.
+Coleção
+
+Cabeçalho + partes/slider com o mesmo tratamento de carrossel e cards do restante.
+Sugestões
+
+Página com atmosfera coerente (já tem radial; refinar sem exagerar).
+Três fluxos (aleatório, palavras-chave, Gemini): cada um como bloco de fluxo claro (título, subtítulo, controles, resultado).
+Toggles filme/série e grid de gêneros: estados ativos/hover alinhados aos chips do modal; em mobile, evitar sensação de “grade espremida” (scroll horizontal com snap se couber só com CSS).
+Estatísticas
+
+Título e subtítulo com hierarquia.
+Tiles numéricos: superfície elevada, opcional borda em gradiente roxo.
+Barras de progresso: trilho e preenchimento com profundidade; animação de largura ao aparecer na tela se for viável com pouco JS.
+Componentes transversais
+
+Dropdowns de busca, skeleton loaders, mensagens de erro/vazio, flash messages: mesma paleta e sombras.
+Scrollbars finas ou estilizadas onde fizer sentido (scrollbar-color / webkit).
+Entregar preferencialmente via style.css e classes mínimas nos templates; priorizar refinamento visual unificado em todas as páginas listadas.

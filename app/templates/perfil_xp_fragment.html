@@ -1,0 +1,18 @@
+<div
+  id="profile-xp-bar"
+  class="profile-xp-bar"
+  hx-get="{{ url_for('profile_xp_bar_partial') }}"
+  hx-trigger="every 45s"
+  hx-swap="outerHTML"
+>
+  <div class="profile-xp-bar__head">
+    <span class="profile-xp-bar__level">Nv. {{ xp_level }}</span>
+    <span class="profile-xp-bar__title">{{ level_title }}</span>
+    <span class="profile-xp-bar__total">{{ xp_total }} XP</span>
+  </div>
+  {% set _xp_pct = (100 * xp_into / xp_need) if xp_need else 0 %}
+  <div class="profile-xp-bar__track" role="progressbar" aria-valuemin="0" aria-valuemax="{{ xp_need }}" aria-valuenow="{{ xp_into }}">
+    <div class="profile-xp-bar__fill" style="width: {{ _xp_pct | round(1) }}%"></div>
+  </div>
+  <p class="profile-xp-bar__hint text-muted">{{ xp_into }} / {{ xp_need }} XP neste nível</p>
+</div>

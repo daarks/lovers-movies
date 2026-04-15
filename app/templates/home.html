@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Assistir{% endblock %}
+{% block body_class %}page-home-watch{% endblock %}
+{% block nav_assistir %} is-active{% endblock %}
+{% block body %}
+<main class="page-watch-home" id="page-watch">
+  <div class="home-typewriter-block">
+    <h1 class="home-typewriter-line">
+      <span class="home-typewriter-text" id="home-typewriter-text" data-text="O que vamos ver hoje baby? 💜" aria-live="polite"></span><span class="home-typewriter-caret" id="home-typewriter-caret" aria-hidden="true"></span>
+    </h1>
+  </div>
+
+  <section class="search-section search-section--home">
+    <div class="search-wrap" id="search-wrap">
+      <input
+        type="search"
+        id="search-input"
+        class="search-input"
+        name="q"
+        placeholder="Buscar filme ou série..."
+        autocomplete="off"
+        aria-autocomplete="list"
+        aria-expanded="false"
+        aria-controls="search-dropdown"
+      />
+      <div id="search-dropdown" class="search-dropdown" role="listbox" hidden></div>
+    </div>
+  </section>
+
+  <p class="home-suggestions-cta">
+    <a href="{{ url_for('suggestions_page') }}" class="btn-primary home-suggestions-btn">Sugestões ✨</a>
+  </p>
+
+  <section class="home-browse-section" aria-labelledby="home-trending-title">
+    <h2 class="home-browse-title" id="home-trending-title">Destaques da semana</h2>
+    {% if trending_items %}
+    <div class="home-media-slider sugg-gemini-slider" role="region">
+      <div class="home-media-slider-track sugg-gemini-slider-track">
+        {% for it in trending_items %}
+        <a class="home-media-card nav-preserve-scroll" href="{{ url_for('details', media_type=it.media_type, tmdb_id=it.id) }}">
+          <div class="home-media-card-poster">
+            {% if it.poster_path %}
+            <img src="https://image.tmdb.org/t/p/w185{{ it.poster_path }}" alt="" loading="lazy">
+            {% else %}
+            <span class="home-media-card-ph" aria-hidden="true">🎬</span>
+            {% endif %}
+          </div>
+          <span class="home-media-card-title">{{ it.title }}</span>
+          <span class="home-media-card-meta">{% if it.media_type == 'movie' %}Filme{% else %}Série{% endif %}{% if it.release_date and it.release_date|length >= 4 %} · {{ it.release_date[:4] }}{% endif %}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <p class="home-browse-empty">Não foi possível carregar os destaques agora.</p>
+    {% endif %}
+  </section>
+
+  <section class="home-browse-section" aria-labelledby="home-cinema-title">
+    <h2 class="home-browse-title" id="home-cinema-title">Cinema e estreias</h2>
+    <h3 class="home-browse-subtitle">Em cartaz (Brasil)</h3>
+    {% if now_playing_items %}
+    <div class="home-media-slider sugg-gemini-slider" role="region">
+      <div class="home-media-slider-track sugg-gemini-slider-track">
+        {% for it in now_playing_items %}
+        <a class="home-media-card nav-preserve-scroll" href="{{ url_for('details', media_type='movie', tmdb_id=it.id) }}">
+          <div class="home-media-card-poster">
+            {% if it.poster_path %}
+            <img src="https://image.tmdb.org/t/p/w185{{ it.poster_path }}" alt="" loading="lazy">
+            {% else %}
+            <span class="home-media-card-ph" aria-hidden="true">🎬</span>
+            {% endif %}
+          </div>
+          <span class="home-media-card-title">{{ it.title }}</span>
+          {% if it.release_date %}
+          <span class="home-media-card-meta">{{ it.release_date|date_br }}</span>
+          {% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <p class="home-browse-empty">Nenhum filme em cartaz listado no TMDB para a região.</p>
+    {% endif %}
+
+    <h3 class="home-browse-subtitle home-browse-subtitle--spaced">Próximas estreias</h3>
+    {% if upcoming_items %}
+    <div class="home-media-slider sugg-gemini-slider" role="region">
+      <div class="home-media-slider-track sugg-gemini-slider-track">
+        {% for it in upcoming_items %}
+        <a class="home-media-card nav-preserve-scroll" href="{{ url_for('details', media_type='movie', tmdb_id=it.id) }}">
+          <div class="home-media-card-poster">
+            {% if it.poster_path %}
+            <img src="https://image.tmdb.org/t/p/w185{{ it.poster_path }}" alt="" loading="lazy">
+            {% else %}
+            <span class="home-media-card-ph" aria-hidden="true">🎬</span>
+            {% endif %}
+          </div>
+          <span class="home-media-card-title">{{ it.title }}</span>
+          {% if it.release_date %}
+          <span class="home-media-card-meta">Estreia {{ it.release_date|date_br }}</span>
+          {% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <p class="home-browse-empty">Nenhuma estreia próxima listada no TMDB.</p>
+    {% endif %}
+  </section>
+
+  {% if recent_items %}
+  <section class="home-browse-section" aria-labelledby="home-recent-title">
+    <h2 class="home-browse-title" id="home-recent-title">Últimos assistidos</h2>
+    <div class="home-media-slider sugg-gemini-slider" role="region">
+      <div class="home-media-slider-track sugg-gemini-slider-track">
+        {% for it in recent_items %}
+        <a class="home-media-card nav-preserve-scroll" href="{{ url_for('details', media_type=it.media_type, tmdb_id=it.tmdb_id) }}">
+          <div class="home-media-card-poster">
+            {% if it.poster_path %}
+            <img src="https://image.tmdb.org/t/p/w185{{ it.poster_path }}" alt="" loading="lazy">
+            {% else %}
+            <span class="home-media-card-ph" aria-hidden="true">🎬</span>
+            {% endif %}
+          </div>
+          <span class="home-media-card-title">{{ it.title }}</span>
+          <span class="home-media-card-meta">{% if it.media_type == 'movie' %}Filme{% else %}Série{% endif %} · {{ '%.1f'|format(it.rating)|replace('.', ',') }}/10</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+</main>
+{% endblock %}

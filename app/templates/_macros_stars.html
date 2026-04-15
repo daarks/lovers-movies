@@ -1,0 +1,15 @@
+{# Linha de 10 estrelas com meios pontos (0,5 a 10). `initial` é número (float) ou 0. #}
+{% macro half_star_row(row_id, initial, extra_class='') -%}
+<div class="star-rating-input star-rating-input--half {{ extra_class }}" id="{{ row_id }}" data-initial="{{ initial }}">
+  {% for i in range(1, 11) %}
+  <span class="star-pair is-empty" data-star-index="{{ i }}" role="group" aria-label="Estrela {{ i }}">
+    <span class="star-pair__gfx" aria-hidden="true">
+      <span class="star-pair__under">&#9733;</span>
+      <span class="star-pair__over">&#9733;</span>
+    </span>
+    <button type="button" class="star-pair__hit star-pair__hit--l" data-value="{{ i - 0.5 }}" aria-label="{{ (i - 0.5)|replace('.', ',') }} de 10"></button>
+    <button type="button" class="star-pair__hit star-pair__hit--r" data-value="{{ i }}" aria-label="{{ i }} de 10"></button>
+  </span>
+  {% endfor %}
+</div>
+{%- endmacro %}

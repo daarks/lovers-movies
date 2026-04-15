@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Ficha técnica{% endblock %}
+{% block body_class %}page-technical{% endblock %}
+{% block header_logo_class %}nav-preserve-scroll{% endblock %}
+{% block body %}
+
+<a href="{{ url_for('details', media_type=media_type, tmdb_id=tmdb_id) }}" class="technical-back nav-preserve-scroll">&#8592; Voltar aos detalhes</a>
+{% if collection_info %}
+<a href="{{ url_for('collection_page', collection_id=collection_info.id) }}" class="technical-collection-icon nav-preserve-scroll" title="Coleção: {{ collection_info.name }}" aria-label="Ver coleção">&#128193;</a>
+{% endif %}
+
+<section class="technical-hero tech-has-backdrop">
+  {% if backdrop_path %}
+  <img class="technical-backdrop" src="https://image.tmdb.org/t/p/w1280{{ backdrop_path }}" alt="" loading="eager">
+  {% endif %}
+  <div class="technical-hero-gradient"></div>
+  <div class="technical-hero-inner">
+    <div class="technical-poster">
+      {% if poster_path %}
+      <img src="https://image.tmdb.org/t/p/w342{{ poster_path }}" alt="" loading="eager">
+      {% else %}
+      <div class="technical-poster-ph" aria-hidden="true">🎬</div>
+      {% endif %}
+    </div>
+    <div class="technical-head">
+      <h1 class="technical-title">{{ title }}</h1>
+      {% if original_title and original_title != title %}
+      <p class="technical-original">{{ original_title }}</p>
+      {% endif %}
+      {% if tagline %}
+      <p class="technical-tagline">&ldquo;{{ tagline }}&rdquo;</p>
+      {% endif %}
+      <div class="technical-meta-row">
+        {% if release_date %}
+        <span>{{ release_date[:4] if release_date|length >= 4 else release_date }}</span>
+        {% endif %}
+        <span class="badge">{% if media_type == 'movie' %}Filme{% else %}Série{% endif %}</span>
+        {% if vote_average is not none %}
+        <span class="tmdb-score">&#11088; {{ '%.1f'|format(vote_average) }} <span class="tmdb-note">(TMDB)</span></span>
+        {% endif %}
+        {% if certification_br %}
+        <span class="badge {{ certification_br|cert_br_class }}" title="Classificação no Brasil (fonte TMDB)">{{ certification_br }}</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="technical-content">
+  {% if overview %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Sinopse</h2>
+    <p class="technical-overview">{{ overview }}</p>
+  </section>
+  {% endif %}
+
+  {% if genres_list %}
+  <div class="chips technical-chips" aria-label="Gêneros">
+    {% for g in genres_list %}
+    <span class="chip">{{ g }}</span>
+    {% endfor %}
+    {% if release_date %}
+    <span class="chip">Lançamento: {{ release_date|date_br }}</span>
+    {% endif %}
+  </div>
+  {% elif release_date %}
+  <div class="chips technical-chips" aria-label="Lançamento">
+    <span class="chip">Lançamento: {{ release_date|date_br }}</span>
+  </div>
+  {% endif %}
+
+  {% if facts %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Informações gerais</h2>
+    <dl class="technical-facts">
+      {% for f in facts %}
+      <div class="technical-fact">
+        <dt>{{ f.label }}</dt>
+        <dd>{{ f.value }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+  {% endif %}
+
+  {% if trailer_key %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Trailer</h2>
+    <div class="technical-video-wrap">
+      <iframe
+        class="technical-video"
+        src="https://www.youtube-nocookie.com/embed/{{ trailer_key }}"
+        title="Trailer no YouTube"
+        loading="lazy"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowfullscreen
+      ></iframe>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if homepage or imdb_id %}
+  <section class="technical-section technical-links-inline">
+    {% if homepage %}
+    <a href="{{ homepage }}" class="technical-external" target="_blank" rel="noopener noreferrer">Site oficial</a>
+    {% endif %}
+    {% if imdb_id %}
+    <a href="https://www.imdb.com/title/{{ imdb_id }}/" class="technical-external" target="_blank" rel="noopener noreferrer">Página no IMDb</a>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if directors %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Diretor(es)</h2>
+    <div class="tech-hscroll" role="region" aria-label="Direção">
+      <ul class="tech-hscroll-track">
+        {% for p in directors %}
+        <li class="technical-hscroll-item">
+          {% if p.id %}
+          <a href="{{ url_for('person_page', person_id=p.id) }}" class="technical-person-card technical-person-card--link nav-preserve-scroll">
+          {% else %}
+          <div class="technical-person-card">
+          {% endif %}
+          {% if p.profile_path %}
+          <img class="technical-person-photo" src="https://image.tmdb.org/t/p/w185{{ p.profile_path }}" alt="" width="92" height="138" loading="lazy">
+          {% else %}
+          <div class="technical-person-placeholder">{{ (p.name or '?')[0] }}</div>
+          {% endif %}
+          <span class="technical-person-name">{{ p.name }}</span>
+          <span class="technical-person-role">{{ p.job }}</span>
+          {% if p.id %}</a>{% else %}</div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if writers or (is_tv and created_by) %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Roteiro e escrita</h2>
+    <div class="tech-hscroll" role="region" aria-label="Roteiro e escrita">
+      <ul class="tech-hscroll-track">
+        {% if is_tv %}
+          {% for p in created_by %}
+          <li class="technical-hscroll-item">
+            {% if p.id %}
+            <a href="{{ url_for('person_page', person_id=p.id) }}" class="technical-person-card technical-person-card--link nav-preserve-scroll">
+            {% else %}
+            <div class="technical-person-card">
+            {% endif %}
+            {% if p.profile_path %}
+            <img class="technical-person-photo" src="https://image.tmdb.org/t/p/w185{{ p.profile_path }}" alt="" width="92" height="138" loading="lazy">
+            {% else %}
+            <div class="technical-person-placeholder">{{ (p.name or '?')[0] }}</div>
+            {% endif %}
+            <span class="technical-person-name">{{ p.name }}</span>
+            <span class="technical-person-role">{{ p.job or 'Criador(a)' }}</span>
+            {% if p.id %}</a>{% else %}</div>{% endif %}
+          </li>
+          {% endfor %}
+        {% endif %}
+        {% for p in writers %}
+        <li class="technical-hscroll-item">
+          {% if p.id %}
+          <a href="{{ url_for('person_page', person_id=p.id) }}" class="technical-person-card technical-person-card--link nav-preserve-scroll">
+          {% else %}
+          <div class="technical-person-card">
+          {% endif %}
+          {% if p.profile_path %}
+          <img class="technical-person-photo" src="https://image.tmdb.org/t/p/w185{{ p.profile_path }}" alt="" width="92" height="138" loading="lazy">
+          {% else %}
+          <div class="technical-person-placeholder">{{ (p.name or '?')[0] }}</div>
+          {% endif %}
+          <span class="technical-person-name">{{ p.name }}</span>
+          <span class="technical-person-role">{{ p.job }}</span>
+          {% if p.id %}</a>{% else %}</div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if cast %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Elenco</h2>
+    <div class="tech-hscroll" role="region" aria-label="Elenco principal">
+      <ul class="tech-hscroll-track">
+        {% for c in cast %}
+        <li class="technical-hscroll-item">
+          {% if c.id %}
+          <a href="{{ url_for('person_page', person_id=c.id) }}" class="technical-cast-card technical-cast-card--link nav-preserve-scroll">
+          {% else %}
+          <div class="technical-cast-card">
+          {% endif %}
+          {% if c.profile_path %}
+          <img class="technical-person-photo" src="https://image.tmdb.org/t/p/w185{{ c.profile_path }}" alt="" width="92" height="138" loading="lazy">
+          {% else %}
+          <div class="technical-person-placeholder">{{ (c.name or '?')[0] }}</div>
+          {% endif %}
+          <span class="technical-cast-name">{{ c.name }}</span>
+          <span class="technical-cast-char">{{ c.character }}</span>
+          {% if c.id %}</a>{% else %}</div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if producers %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Produtores</h2>
+    <div class="tech-hscroll" role="region" aria-label="Produtores">
+      <ul class="tech-hscroll-track">
+        {% for p in producers %}
+        <li class="technical-hscroll-item">
+          {% if p.id %}
+          <a href="{{ url_for('person_page', person_id=p.id) }}" class="technical-person-card technical-person-card--link technical-producer-hscroll-card nav-preserve-scroll">
+          {% else %}
+          <div class="technical-person-card technical-producer-hscroll-card">
+          {% endif %}
+          {% if p.profile_path %}
+          <img class="technical-person-photo" src="https://image.tmdb.org/t/p/w185{{ p.profile_path }}" alt="" width="92" height="138" loading="lazy">
+          {% else %}
+          <div class="technical-person-placeholder">{{ (p.name or '?')[0] }}</div>
+          {% endif %}
+          <span class="technical-person-name">{{ p.name }}</span>
+          <span class="technical-person-role">{{ p.job }}</span>
+          {% if p.id %}</a>{% else %}</div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if extra_posters or extra_backdrops %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Mais imagens</h2>
+    {% if extra_posters %}
+    <h3 class="technical-images-subtitle">Pôsteres</h3>
+    <div class="technical-images-strip" role="list">
+      {% for path in extra_posters %}
+      <a class="technical-images-thumb" href="https://image.tmdb.org/t/p/w780{{ path }}" target="_blank" rel="noopener noreferrer">
+        <img src="https://image.tmdb.org/t/p/w185{{ path }}" alt="" loading="lazy">
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if extra_backdrops %}
+    <h3 class="technical-images-subtitle{% if not extra_posters %} technical-images-subtitle--first{% endif %}">Imagens de fundo</h3>
+    <div class="technical-images-strip technical-images-strip--wide" role="list">
+      {% for path in extra_backdrops %}
+      <a class="technical-images-thumb technical-images-thumb--backdrop" href="https://image.tmdb.org/t/p/w1280{{ path }}" target="_blank" rel="noopener noreferrer">
+        <img src="https://image.tmdb.org/t/p/w300{{ path }}" alt="" loading="lazy">
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if similar %}
+  <section class="technical-section">
+    <h2 class="technical-section-title">Títulos semelhantes</h2>
+    <div class="technical-similar">
+      {% for s in similar %}
+      <a class="technical-similar-card nav-preserve-scroll" href="{{ url_for('details', media_type=s.media_type, tmdb_id=s.id) }}">
+        {% if s.poster_path %}
+        <img src="https://image.tmdb.org/t/p/w154{{ s.poster_path }}" alt="" width="92" height="138" loading="lazy">
+        {% else %}
+        <div class="technical-similar-ph">🎬</div>
+        {% endif %}
+        <span class="technical-similar-title">{{ s.title }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

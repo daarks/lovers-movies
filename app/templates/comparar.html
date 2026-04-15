@@ -1,0 +1,358 @@
+{% extends "base.html" %}
+{% block title %}Comparar{% endblock %}
+{% block body_class %}page-comparar{% endblock %}
+{% block head_extra %}
+  <meta name="view-transition" content="same-origin">
+{% endblock %}
+{% block body %}
+<main
+  class="comparar-main"
+  data-init-a-id="{{ a_id if a_id else '' }}"
+  data-init-a-mt="{{ a_mt }}"
+  data-init-b-id="{{ b_id if b_id else '' }}"
+  data-init-b-mt="{{ b_mt }}"
+>
+  <h1 class="section-title">Comparar dois títulos</h1>
+  <p class="text-muted comparar-lead">Pesquise no TMDB (pt-BR). O <strong>primeiro</strong> título vai para a coluna da esquerda e o <strong>segundo</strong> para a direita. A comparação aparece automaticamente.</p>
+
+  <div class="comparar-search-wrap filter-modal-panel--glass">
+    <label class="visually-hidden" for="comparar-search-input">Buscar filme ou série</label>
+    <input type="search" id="comparar-search-input" class="search-input comparar-search-input" placeholder="Buscar por título…" autocomplete="off" aria-autocomplete="list" aria-controls="comparar-search-dropdown" aria-expanded="false">
+    <div id="comparar-search-dropdown" class="search-dropdown comparar-search-dropdown" role="listbox" hidden></div>
+  </div>
+  <p class="form-error-banner" id="comparar-error" role="alert" hidden></p>
+
+  <div class="comparar-columns">
+    <article class="comparar-pick-card filter-modal-panel--glass" id="comparar-col-left" data-slot="left">
+      <h2 class="comparar-col-title">Coluna esquerda</h2>
+      <div class="comparar-pick-body" id="comparar-pick-left">
+        <p class="text-muted comparar-pick-empty">Nenhum título selecionado.</p>
+      </div>
+      <button type="button" class="btn-ghost btn-sm comparar-pick-clear" id="comparar-clear-left" hidden>Limpar</button>
+    </article>
+    <article class="comparar-pick-card filter-modal-panel--glass" id="comparar-col-right" data-slot="right">
+      <h2 class="comparar-col-title">Coluna direita</h2>
+      <div class="comparar-pick-body" id="comparar-pick-right">
+        <p class="text-muted comparar-pick-empty">Nenhum título selecionado.</p>
+      </div>
+      <button type="button" class="btn-ghost btn-sm comparar-pick-clear" id="comparar-clear-right" hidden>Limpar</button>
+    </article>
+  </div>
+
+  <section class="comparar-common filter-modal-panel--glass" id="comparar-common-wrap" hidden>
+    <h2 class="section-title">Elenco em comum (amostra)</h2>
+    <ul class="comparar-cast-list" id="comparar-common-list"></ul>
+    <p class="text-muted" id="comparar-common-empty" hidden>Sem interseção nas primeiras posições do elenco.</p>
+  </section>
+</main>
+{% endblock %}
+{% block scripts_extra %}
+<script>
+(function () {
+  var root = document.querySelector(".comparar-main");
+  var input = document.getElementById("comparar-search-input");
+  var dd = document.getElementById("comparar-search-dropdown");
+  var leftEl = document.getElementById("comparar-pick-left");
+  var rightEl = document.getElementById("comparar-pick-right");
+  var clearL = document.getElementById("comparar-clear-left");
+  var clearR = document.getElementById("comparar-clear-right");
+  var errorEl = document.getElementById("comparar-error");
+  var commonWrap = document.getElementById("comparar-common-wrap");
+  var commonList = document.getElementById("comparar-common-list");
+  var commonEmpty = document.getElementById("comparar-common-empty");
+  if (!root || !input || !leftEl || !rightEl) return;
+
+  var leftPick = null;
+  var rightPick = null;
+
+  function esc(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function posterUrl(p) {
+    if (!p) return "";
+    return "https://image.tmdb.org/t/p/w185" + p;
+  }
+
+  function mediaLabel(mt) {
+    return mt === "movie" ? "Filme" : "Série";
+  }
+
+  function setError(msg) {
+    if (!errorEl) return;
+    if (!msg) {
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+      return;
+    }
+    errorEl.hidden = false;
+    errorEl.textContent = msg;
+  }
+
+  function renderPickCard(el, pick, emptyText, fallbackLabel) {
+    if (!pick || !pick.id) {
+      el.innerHTML = '<p class="text-muted comparar-pick-empty">' + emptyText + "</p>";
+      return;
+    }
+    var titleSafe = pick.title ? String(pick.title) : "Carregando…";
+    var poster = pick.poster_path
+      ? '<img src="' + esc(posterUrl(pick.poster_path)) + '" alt="" class="comparar-pick-poster" width="120" height="180" loading="lazy">'
+      : '<div class="comparar-pick-poster-ph" aria-hidden="true">🎬</div>';
+    var year = pick.year ? String(pick.year) : "";
+    var vote = typeof pick.vote === "number" ? " · TMDB " + pick.vote.toFixed(1) : "";
+    var meta = [year, mediaLabel(pick.media_type || "movie")].filter(Boolean).join(" · ") + vote;
+    var runtime = pick.runtime_label
+      ? '<p class="comparar-meta-line"><span class="comparar-meta-k">Duração</span> ' + esc(pick.runtime_label) + "</p>"
+      : "";
+    var genres = pick.genres_label
+      ? '<p class="comparar-meta-line"><span class="comparar-meta-k">Gêneros</span> ' + esc(pick.genres_label) + "</p>"
+      : "";
+    var directors = pick.directors_label
+      ? '<p class="comparar-meta-line"><span class="comparar-meta-k">Direção</span> ' + esc(pick.directors_label) + "</p>"
+      : "";
+    var countries = pick.countries_label
+      ? '<p class="comparar-meta-line"><span class="comparar-meta-k">Países</span> ' + esc(pick.countries_label) + "</p>"
+      : "";
+    var overview = pick.overview
+      ? '<p class="comparar-overview">' + esc(pick.overview) + "</p>"
+      : "";
+    el.innerHTML =
+      '<div class="comparar-pick-inner">' +
+      poster +
+      '<div class="comparar-pick-text"><p class="comparar-pick-badge">' +
+      esc(fallbackLabel || mediaLabel(pick.media_type || "movie")) +
+      "</p><h3 class=\"comparar-pick-title\">" +
+      esc(titleSafe) +
+      "</h3>" +
+      '<p class="text-muted comparar-result-meta">' + esc(meta) + "</p>" +
+      runtime +
+      genres +
+      directors +
+      countries +
+      overview +
+      "</div></div>";
+  }
+
+  function syncSlotShell() {
+    renderPickCard(leftEl, leftPick, "Nenhum título selecionado.");
+    renderPickCard(rightEl, rightPick, "Nenhum título selecionado.");
+    if (clearL) clearL.hidden = !leftPick;
+    if (clearR) clearR.hidden = !rightPick;
+  }
+
+  function renderCommon(common) {
+    if (!commonWrap || !commonList || !commonEmpty) return;
+    if (!leftPick || !rightPick) {
+      commonWrap.hidden = true;
+      commonList.innerHTML = "";
+      commonEmpty.hidden = true;
+      return;
+    }
+    commonWrap.hidden = false;
+    if (!common || !common.length) {
+      commonList.innerHTML = "";
+      commonEmpty.hidden = false;
+      return;
+    }
+    commonEmpty.hidden = true;
+    commonList.innerHTML = common
+      .map(function (c) {
+        return "<li>" + esc(c.name || "") + "</li>";
+      })
+      .join("");
+  }
+
+  function fetchComparison() {
+    syncSlotShell();
+    setError("");
+    renderCommon([]);
+    var query = [];
+    if (leftPick) {
+      query.push("a=" + encodeURIComponent(String(leftPick.id)));
+      query.push("a_mt=" + encodeURIComponent(leftPick.media_type || "movie"));
+    }
+    if (rightPick) {
+      query.push("b=" + encodeURIComponent(String(rightPick.id)));
+      query.push("b_mt=" + encodeURIComponent(rightPick.media_type || "movie"));
+    }
+    try {
+      var nextUrl = "/comparar" + (query.length ? "?" + query.join("&") : "");
+      window.history.replaceState({}, "", nextUrl);
+    } catch (e) {
+      /* ignore */
+    }
+    if (!query.length) return;
+    fetch("/api/comparar?" + query.join("&"))
+      .then(function (r) {
+        return r.json().then(function (data) {
+          return { ok: r.ok, data: data || {} };
+        });
+      })
+      .then(function (ref) {
+        if (!ref.ok) {
+          setError(ref.data.error || "Não foi possível comparar os títulos agora.");
+          return;
+        }
+        var data = ref.data || {};
+        if (leftPick) renderPickCard(leftEl, data.left || leftPick, "Nenhum título selecionado.");
+        if (rightPick) renderPickCard(rightEl, data.right || rightPick, "Nenhum título selecionado.");
+        renderCommon(data.common || []);
+      })
+      .catch(function () {
+        setError("Erro de rede ao comparar títulos.");
+      });
+  }
+
+  function assignPick(pick) {
+    if (!leftPick) {
+      leftPick = pick;
+    } else if (!rightPick) {
+      rightPick = pick;
+    } else {
+      rightPick = pick;
+    }
+    fetchComparison();
+  }
+
+  function searchPrimary(query) {
+    return fetch("/search/smart?q=" + encodeURIComponent(query) + "&type=multi")
+      .then(function (r) {
+        if (!r.ok) throw new Error("smart");
+        return r.json();
+      })
+      .catch(function () {
+        return fetch("/search?q=" + encodeURIComponent(query) + "&type=multi")
+          .then(function (r) {
+            if (!r.ok) throw new Error("classic");
+            return r.json();
+          });
+      });
+  }
+
+  var initAId = parseInt(root.getAttribute("data-init-a-id") || "0", 10);
+  var initAMt = root.getAttribute("data-init-a-mt") || "movie";
+  var initBId = parseInt(root.getAttribute("data-init-b-id") || "0", 10);
+  var initBMt = root.getAttribute("data-init-b-mt") || "movie";
+  if (!isNaN(initAId) && initAId > 0) {
+    leftPick = { id: initAId, media_type: initAMt };
+  }
+  if (!isNaN(initBId) && initBId > 0) {
+    rightPick = { id: initBId, media_type: initBMt };
+  }
+  fetchComparison();
+
+  if (clearL) {
+    clearL.addEventListener("click", function () {
+      leftPick = null;
+      if (rightPick) {
+        leftPick = rightPick;
+        rightPick = null;
+      }
+      fetchComparison();
+    });
+  }
+  if (clearR) {
+    clearR.addEventListener("click", function () {
+      rightPick = null;
+      fetchComparison();
+    });
+  }
+
+  var debounceTimer = null;
+  function closeDd() {
+    dd.hidden = true;
+    dd.innerHTML = "";
+    input.setAttribute("aria-expanded", "false");
+  }
+
+  function openDd() {
+    dd.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+
+  function renderResults(items) {
+    if (!items.length) {
+      dd.innerHTML =
+        '<div class="search-result" style="cursor:default;color:var(--text-muted)">Nenhum resultado.</div>';
+      openDd();
+      return;
+    }
+    dd.innerHTML = items
+      .map(function (it) {
+        var title = esc(it.title || "");
+        var mt = it.media_type === "tv" ? "tv" : "movie";
+        var badge = mt === "movie" ? "Filme" : "Série";
+        var thumb = it.poster_path
+          ? '<img src="' + esc(posterUrl(it.poster_path)) + '" alt="" width="46" height="69" loading="lazy">'
+          : '<span aria-hidden="true">🎬</span>';
+        var payload = encodeURIComponent(
+          JSON.stringify({
+            id: it.id,
+            media_type: mt,
+            title: it.title || "",
+            poster_path: it.poster_path || "",
+          })
+        );
+        return (
+          '<button type="button" class="search-result comparar-dd-item" role="option" data-payload="' +
+          payload +
+          '">' +
+          '<div class="search-result-thumb">' +
+          thumb +
+          '</div><div class="search-result-body"><div class="search-result-title">' +
+          title +
+          '</div><div class="search-result-meta"><span class="badge">' +
+          badge +
+          "</span></div></div></button>"
+        );
+      })
+      .join("");
+    openDd();
+    dd.querySelectorAll(".comparar-dd-item").forEach(function (b) {
+      b.addEventListener("click", function () {
+        try {
+          var raw = decodeURIComponent(b.getAttribute("data-payload") || "");
+          assignPick(JSON.parse(raw));
+        } catch (e) {
+          /* ignore */
+        }
+        closeDd();
+        input.value = "";
+      });
+    });
+  }
+
+  function doSearch() {
+    var q = (input.value || "").trim();
+    if (!q) {
+      closeDd();
+      return;
+    }
+    searchPrimary(q)
+      .then(function (data) {
+        renderResults(data.results || []);
+      })
+      .catch(function () {
+        dd.innerHTML =
+          '<div class="search-result" style="cursor:default;color:#f87171">Erro na busca.</div>';
+        openDd();
+      });
+  }
+
+  input.addEventListener("input", function () {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(doSearch, 280);
+  });
+  input.addEventListener("focus", function () {
+    if ((input.value || "").trim()) doSearch();
+  });
+  document.addEventListener("click", function (e) {
+    if (!dd.contains(e.target) && e.target !== input) closeDd();
+  });
+})();
+</script>
+{% endblock %}

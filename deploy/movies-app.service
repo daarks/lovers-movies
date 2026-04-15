@@ -1,0 +1,28 @@
+[Unit]
+Description=Nossa Lista — filmes e séries (Flask)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Troque "pi" pelo seu usuário na Raspberry, se for diferente:
+User=pi
+Group=pi
+
+# Caminho absoluto da pasta app/ (onde está app.py) — preenchido pelo install-rpi.sh
+Environment=MOVIES_APP_DIR=__APP_DIR__
+# Variáveis sensíveis (TMDB, SECRET_KEY, FLASK_BIND): lidas pelo systemd (root), repassadas ao processo
+EnvironmentFile=-/etc/movies-app.env
+
+WorkingDirectory=__APP_DIR__
+ExecStart=__DEPLOY_DIR__/start-gunicorn.sh
+
+Restart=always
+RestartSec=5
+
+# Segurança básica
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

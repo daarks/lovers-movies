@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block title %}Dia {{ day }}{% endblock %}
+{% block body_class %}page-daily-day{% endblock %}
+{% block body %}
+<main class="daily-day-main">
+  <div class="daily-day-toolbar">
+    <a href="{{ url_for('assistimos_hoje_page', m=month) }}" class="btn-secondary daily-day-back nav-preserve-scroll">← Calendário</a>
+  </div>
+  <h1 class="section-title daily-day-title">Dia {{ day }}</h1>
+  <p class="text-muted">Adicione filmes ou séries vistos neste dia.</p>
+
+  <section class="daily-day-section filter-modal-panel--glass" aria-labelledby="day-entries-title">
+    <h2 id="day-entries-title" class="daily-day-subtitle">Registos</h2>
+    <div id="day-entries" class="day-entries-grid" aria-live="polite"></div>
+  </section>
+
+  <section class="daily-day-section filter-modal-panel--glass" aria-labelledby="day-add-title">
+    <h2 id="day-add-title" class="daily-day-subtitle">Adicionar</h2>
+    <label class="daily-field visually-hidden" for="daily-search-q">Buscar TMDB</label>
+    <input type="search" id="daily-search-q" class="daily-search-input" placeholder="Buscar filme ou série…" autocomplete="off">
+    <div id="daily-search-dd" class="daily-search-dropdown" hidden role="listbox"></div>
+
+    <div id="daily-pick-summary" class="daily-pick-summary" hidden>
+      <div class="daily-pick-row">
+        <img id="daily-pick-poster" class="daily-pick-poster" alt="" width="56" height="84" hidden>
+        <div>
+          <p id="daily-pick-title" class="daily-pick-title"></p>
+          <p id="daily-pick-meta" class="text-muted small"></p>
+        </div>
+      </div>
+      <button type="button" class="btn-primary" id="btn-daily-movie-submit" hidden>Adicionar à lista do dia</button>
+      <button type="button" class="btn-secondary" id="btn-daily-tv-open" hidden>Escolher episódios…</button>
+    </div>
+  </section>
+
+  <dialog class="filter-modal daily-modal daily-tv-ep-dialog" id="daily-tv-ep-dialog" aria-labelledby="daily-tv-dialog-title">
+    <div class="filter-modal-inner daily-modal-inner daily-modal-inner--tv">
+      <h2 id="daily-tv-dialog-title" class="filter-modal-title">Episódios</h2>
+      <button type="button" class="filter-modal-close" id="daily-tv-dialog-close" aria-label="Fechar">×</button>
+      <label class="daily-field">Temporada
+        <select id="daily-season-select" class="daily-season-select"></select>
+      </label>
+      <p class="text-muted small">Toque nos episódios vistos <strong>neste dia</strong>.</p>
+      <div class="daily-ep-grid" id="daily-ep-grid" aria-label="Episódios"></div>
+      <button type="button" class="btn-primary daily-tv-dialog-submit" id="btn-daily-tv-submit">Registar série</button>
+    </div>
+  </dialog>
+</main>
+<script>
+(function () {
+  var DAY = {{ day|tojson }};
+  var grid = document.getElementById("day-entries");
+  var searchTimer = null;
+  var searchAbort = null;
+  var pick = null;
+  var tvMeta = null;
+  var marksSet = new Set();
+  var todayEpSet = new Set();
+  var tvDialog = document.getElementById("daily-tv-ep-dialog");
+
+  function el(id) { return document.getElementById(id); }
+
+  function posterUrl(path, size) {
+    if (!path) return "";
+    return "https://image.tmdb.org/t/p/" + (size || "w92") + path;
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement("div");
+    d.textContent = s || "";
+    return d.innerHTML;
+  }
+
+  function parseProgress(raw) {
+    if (!raw) return null;
+    if (typeof raw === "object") return raw;
+    try {
+      return JSON.parse(String(raw));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function loadEntries() {
+    fetch("/api/daily-watch/day/" + encodeURIComponent(DAY))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var items = data.items || [];
+        if (!items.length) {
+          grid.innerHTML = "<p class=\"text-muted\">Nenhum registo neste dia.</p>";
+          return;
+        }
+        grid.innerHTML = items
+          .map(function (it) {
+            var thumb = it.poster_path
+              ? "<img src=\"" + posterUrl(it.poster_path, "w185") + "\" alt=\"\" loading=\"lazy\">"
+              : "<span class=\"day-entry-card-ph\" aria-hidden=\"true\">&#127902;</span>";
+            var pj = parseProgress(it.progress_json);
+            var eps = (pj && pj.episodes) || [];
+            eps = eps.slice().sort(function (a, b) {
+              if (a.season !== b.season) return a.season - b.season;
+              return a.episode - b.episode;
+            });
+            var epHtml = "";
+            if (it.media_type === "tv" && eps.length) {
+              epHtml =
+                "<div class=\"day-entry-eps\" aria-label=\"Episódios neste dia\">" +
+                eps
+                  .map(function (e) {
+                    return (
+                      "<span class=\"day-entry-ep-chip\" title=\"T" +
+                      e.season +
+                      "E" +
+                      e.episode +
+                      "\">T" +
+                      e.season +
+                      "·E" +
+                      e.episode +
+                      "</span>"
+                    );
+                  })
+                  .join("") +
+                "</div>";
+            }
+            return (
+              "<article class=\"day-entry-card\">" +
+              "<div class=\"day-entry-card-poster\">" +
+              thumb +
+              "</div>" +
+              "<p class=\"day-entry-card-title\">" +
+              escapeHtml(it.title || "") +
+              "</p>" +
+              epHtml +
+              "<div class=\"day-entry-card-actions\">" +
+              "<button type=\"button\" class=\"btn-ghost btn-sm\" data-rid=\"" +
+              it.id +
+              "\">Remover</button>" +
+              "</div></article>"
+            );
+          })
+          .join("");
+        grid.querySelectorAll("button[data-rid]").forEach(function (b) {
+          b.addEventListener("click", function () {
+            fetch("/api/daily-watch/remove/" + b.getAttribute("data-rid"), { method: "POST" })
+              .then(loadEntries);
+          });
+        });
+      });
+  }
+
+  function resetPick() {
+    pick = null;
+    tvMeta = null;
+    marksSet = new Set();
+    todayEpSet = new Set();
+    el("daily-search-q").value = "";
+    el("daily-search-dd").hidden = true;
+    el("daily-search-dd").innerHTML = "";
+    el("daily-pick-summary").hidden = true;
+    el("btn-daily-movie-submit").hidden = true;
+    el("btn-daily-tv-open").hidden = true;
+    el("daily-ep-grid").innerHTML = "";
+    el("daily-season-select").innerHTML = "";
+  }
+
+  function runSearch(query) {
+    if (searchAbort) searchAbort.abort();
+    searchAbort = new AbortController();
+    var url = "/search?q=" + encodeURIComponent(query) + "&type=multi";
+    fetch(url, { signal: searchAbort.signal })
+      .then(function (r) {
+        if (!r.ok) throw new Error("search");
+        return r.json();
+      })
+      .then(function (data) {
+        var results = data.results || [];
+        var dd = el("daily-search-dd");
+        if (!results.length) {
+          dd.innerHTML = "<div class=\"daily-dd-muted\">Nenhum resultado.</div>";
+          dd.hidden = false;
+          return;
+        }
+        dd.innerHTML = results
+          .map(function (item, idx) {
+            return (
+              "<button type=\"button\" class=\"daily-dd-item\" data-idx=\"" +
+              idx +
+              "\">" +
+              "<span class=\"daily-dd-thumb\">" +
+              (item.poster_path
+                ? "<img src=\"" + posterUrl(item.poster_path, "w92") + "\" alt=\"\" width=\"40\" height=\"60\">"
+                : "&#127902;") +
+              "</span><span><strong>" +
+              escapeHtml(item.title || "") +
+              "</strong><br><span class=\"text-muted small\">" +
+              (item.release_date && item.release_date.length >= 4 ? item.release_date.slice(0, 4) + " · " : "") +
+              (item.media_type === "tv" ? "Série" : "Filme") +
+              "</span></span></button>"
+            );
+          })
+          .join("");
+        dd.hidden = false;
+        dd.querySelectorAll(".daily-dd-item").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var idx = parseInt(btn.getAttribute("data-idx"), 10);
+            if (isNaN(idx) || !results[idx]) return;
+            onPick(results[idx]);
+          });
+        });
+      })
+      .catch(function (e) {
+        if (e.name === "AbortError") return;
+        var dd = el("daily-search-dd");
+        dd.innerHTML = "<div class=\"daily-dd-muted\">Erro na busca.</div>";
+        dd.hidden = false;
+      });
+  }
+
+  el("daily-search-q").addEventListener("input", function () {
+    var q = el("daily-search-q").value.trim();
+    clearTimeout(searchTimer);
+    if (!q) {
+      el("daily-search-dd").hidden = true;
+      return;
+    }
+    searchTimer = setTimeout(function () {
+      runSearch(q);
+    }, 380);
+  });
+
+  function keySe(season, episode) {
+    return season + "-" + episode;
+  }
+
+  function onPick(hit) {
+    var mt = hit.media_type;
+    if (mt !== "tv" && mt !== "movie") return;
+    pick = {
+      tmdb_id: hit.id,
+      media_type: mt,
+      title: hit.title || "",
+      poster_path: hit.poster_path || null
+    };
+    el("daily-search-dd").hidden = true;
+    el("daily-pick-title").textContent = pick.title;
+    el("daily-pick-meta").textContent = pick.media_type === "tv" ? "Série" : "Filme";
+    var img = el("daily-pick-poster");
+    if (pick.poster_path) {
+      img.src = posterUrl(pick.poster_path, "w185");
+      img.hidden = false;
+    } else {
+      img.removeAttribute("src");
+      img.hidden = true;
+    }
+    el("daily-pick-summary").hidden = false;
+    el("btn-daily-movie-submit").hidden = pick.media_type !== "movie";
+    el("btn-daily-tv-open").hidden = pick.media_type !== "tv";
+  }
+
+  function renderEpGrid() {
+    var sel = el("daily-season-select");
+    var sn = parseInt(sel.value, 10);
+    var gridEl = el("daily-ep-grid");
+    if (!tvMeta || !sn) {
+      gridEl.innerHTML = "";
+      return;
+    }
+    var seasonRow = (tvMeta.seasons || []).find(function (s) {
+      return s.season_number === sn;
+    });
+    var count = seasonRow ? seasonRow.episode_count : 0;
+    var frag = document.createDocumentFragment();
+    for (var e = 1; e <= count; e++) {
+      (function (ep) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "daily-ep-cell";
+        b.textContent = String(ep);
+        b.setAttribute("aria-pressed", "false");
+        var k = keySe(sn, ep);
+        if (marksSet.has(k)) b.classList.add("is-marked-past");
+        if (todayEpSet.has(k)) {
+          b.classList.add("is-picked-today");
+          b.setAttribute("aria-pressed", "true");
+        }
+        b.addEventListener("click", function () {
+          var btn = b;
+          var kk = keySe(sn, ep);
+          if (todayEpSet.has(kk)) {
+            todayEpSet.delete(kk);
+            btn.classList.remove("is-picked-today");
+            btn.setAttribute("aria-pressed", "false");
+          } else {
+            todayEpSet.add(kk);
+            btn.classList.add("is-picked-today");
+            btn.setAttribute("aria-pressed", "true");
+          }
+        });
+        frag.appendChild(b);
+      })(e);
+    }
+    gridEl.innerHTML = "";
+    gridEl.appendChild(frag);
+  }
+
+  function openTvDialog() {
+    if (!pick || pick.media_type !== "tv") return;
+    fetch("/api/tmdb/tv/" + pick.tmdb_id + "/meta")
+      .then(function (r) { return r.json(); })
+      .then(function (meta) {
+        if (meta.error) throw new Error(meta.error);
+        tvMeta = meta;
+        var sel = el("daily-season-select");
+        sel.innerHTML = "";
+        var seasons = meta.seasons || [];
+        if (!seasons.length) {
+          el("daily-ep-grid").innerHTML = "<p class=\"text-muted\">Sem temporadas no TMDB.</p>";
+          if (typeof tvDialog.showModal === "function") tvDialog.showModal();
+          return;
+        }
+        seasons.forEach(function (s) {
+          var opt = document.createElement("option");
+          opt.value = String(s.season_number);
+          opt.textContent = "T" + s.season_number + (s.name ? " — " + s.name : "") + " (" + s.episode_count + " eps)";
+          sel.appendChild(opt);
+        });
+        sel.onchange = function () {
+          renderEpGrid();
+        };
+        return fetch("/api/tv-episode-marks?tmdb_id=" + encodeURIComponent(String(pick.tmdb_id)))
+          .then(function (r) { return r.json(); })
+          .then(function (mk) {
+            marksSet = new Set();
+            (mk.items || []).forEach(function (it) {
+              marksSet.add(keySe(it.season, it.episode));
+            });
+            todayEpSet = new Set();
+            renderEpGrid();
+            if (typeof tvDialog.showModal === "function") tvDialog.showModal();
+          });
+      })
+      .catch(function () {
+        if (window.showAppToast) window.showAppToast("Erro ao carregar série.", "error");
+      });
+  }
+
+  el("btn-daily-tv-open").addEventListener("click", openTvDialog);
+  el("daily-tv-dialog-close").addEventListener("click", function () {
+    if (typeof tvDialog.close === "function") tvDialog.close();
+  });
+
+  function postDaily(body) {
+    fetch("/api/daily-watch/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j.error) {
+          if (window.showAppToast) window.showAppToast(j.error, "error");
+          else alert(j.error);
+          return;
+        }
+        if (window.showAppToast) window.showAppToast("Registado.", "ok");
+        resetPick();
+        loadEntries();
+        if (typeof tvDialog.close === "function") tvDialog.close();
+      });
+  }
+
+  el("btn-daily-movie-submit").addEventListener("click", function () {
+    if (!pick) return;
+    postDaily({
+      day: DAY,
+      tmdb_id: pick.tmdb_id,
+      media_type: "movie",
+      title: pick.title,
+      poster_path: pick.poster_path
+    });
+  });
+
+  el("btn-daily-tv-submit").addEventListener("click", function () {
+    if (!pick) return;
+    var eps = [];
+    todayEpSet.forEach(function (k) {
+      var parts = k.split("-");
+      eps.push({ season: parseInt(parts[0], 10), episode: parseInt(parts[1], 10) });
+    });
+    if (!eps.length) {
+      if (window.showAppToast) window.showAppToast("Escolha ao menos um episódio.", "error");
+      return;
+    }
+    postDaily({
+      day: DAY,
+      tmdb_id: pick.tmdb_id,
+      media_type: "tv",
+      title: pick.title,
+      poster_path: pick.poster_path,
+      episodes: eps
+    });
+  });
+
+  loadEntries();
+})();
+</script>
+{% endblock %}

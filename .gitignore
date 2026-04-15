@@ -1,0 +1,7 @@
+app/.venv/
+app/instance/
+# Chaves de API e tokens (use secrets.example como modelo)
+secrets.env
+__pycache__/
+*.py[cod]
+*.db

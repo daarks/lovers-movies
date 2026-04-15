@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Assistimos hoje{% endblock %}
+{% block body_class %}page-daily-calendar{% endblock %}
+{% block body %}
+<main class="daily-calendar-main">
+  <h1 class="section-title">Assistimos hoje</h1>
+  <p class="text-muted">Calendário mensal — toque num dia para registar o que viram.</p>
+
+  <div class="calendar-toolbar">
+    <label for="month-input" class="visually-hidden">Mês</label>
+    <input type="month" id="month-input" class="calendar-month-input" value="{{ month }}">
+    <button type="button" class="btn-secondary" id="btn-refresh">Atualizar</button>
+  </div>
+
+  <div class="calendar-grid" id="calendar-grid" aria-busy="true"></div>
+</main>
+<script>
+(function () {
+  var grid = document.getElementById("calendar-grid");
+  var monthInput = document.getElementById("month-input");
+
+  function posterUrl(path, size) {
+    if (!path) return "";
+    return "https://image.tmdb.org/t/p/" + (size || "w92") + path;
+  }
+
+  function daysInMonth(y, m) {
+    return new Date(y, m, 0).getDate();
+  }
+
+  function load() {
+    var m = monthInput.value;
+    grid.setAttribute("aria-busy", "true");
+    fetch("/api/daily-watch?m=" + encodeURIComponent(m))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        renderCalendar(m, data.by_day || {});
+        grid.setAttribute("aria-busy", "false");
+      });
+  }
+
+  function emptyFace() {
+    return '<div class="calendar-cell-empty" role="status"><span class="calendar-empty-face" aria-hidden="true">:-(</span><span class="calendar-empty-text">não vimos nada</span></div>';
+  }
+
+  function posterCell(src) {
+    if (!src) return '<div class="calendar-mini-ph">🎬</div>';
+    return '<img src="' + posterUrl(src, "w92") + '" alt="" width="46" height="69" loading="lazy">';
+  }
+
+  function mosaicForDay(items) {
+    var n = items.length;
+    if (n === 0) return emptyFace();
+    if (n === 1) return '<div class="calendar-mosaic calendar-mosaic--1">' + posterCell(items[0].poster_path) + "</div>";
+    if (n === 2) {
+      return '<div class="calendar-mosaic calendar-mosaic--2">' + items.map(function (it) { return posterCell(it.poster_path); }).join("") + "</div>";
+    }
+    if (n === 3) {
+      return '<div class="calendar-mosaic calendar-mosaic--3">' + items.slice(0, 3).map(function (it) { return posterCell(it.poster_path); }).join("") + "</div>";
+    }
+    return (
+      '<div class="calendar-mosaic calendar-mosaic--4">' +
+      items.slice(0, 4).map(function (it) { return posterCell(it.poster_path); }).join("") +
+      (n > 4 ? '<span class="calendar-more">+' + (n - 4) + "</span>" : "") +
+      "</div>"
+    );
+  }
+
+  function renderCalendar(monthStr, byDay) {
+    var parts = monthStr.split("-");
+    var y = parseInt(parts[0], 10);
+    var mo = parseInt(parts[1], 10);
+    var firstDow = new Date(y, mo - 1, 1).getDay();
+    var dim = daysInMonth(y, mo);
+    var labels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+    var html = '<div class="calendar-weekdays">' + labels.map(function (d) { return "<span>" + d + "</span>"; }).join("") + "</div>";
+    html += '<div class="calendar-cells">';
+    for (var i = 0; i < firstDow; i++) {
+      html += '<div class="calendar-cell calendar-cell--pad" aria-hidden="true"></div>';
+    }
+    for (var d = 1; d <= dim; d++) {
+      var key = monthStr + "-" + String(d).padStart(2, "0");
+      var items = byDay[key] || [];
+      html +=
+        '<a class="calendar-cell calendar-cell--link" href="/assistimos-hoje/dia/' +
+        key +
+        '" data-day="' +
+        key +
+        '" aria-label="Dia ' +
+        d +
+        ", " +
+        items.length +
+        ' título(s)">' +
+        '<span class="calendar-day-num">' +
+        d +
+        "</span>" +
+        mosaicForDay(items) +
+        "</a>";
+    }
+    html += "</div>";
+    grid.innerHTML = html;
+  }
+
+  document.getElementById("btn-refresh").addEventListener("click", load);
+  monthInput.addEventListener("change", load);
+  load();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Quem está usando?{% endblock %}
+{% block body_class %}page-welcome{% endblock %}
+{% block body %}
+<main class="welcome-main filter-modal-panel--glass">
+  <h1 class="welcome-title">Quem está usando este aparelho agora?</h1>
+  <p class="text-muted welcome-hint">Usamos isto para Swipe, apostas e conquistas. Pode trocar depois no topo.</p>
+  <div class="welcome-actions">
+    <button type="button" class="btn-primary welcome-profile-pick" data-profile-slug="a">{{ profile_label_a }}</button>
+    <button type="button" class="btn-primary welcome-profile-pick" data-profile-slug="b">{{ profile_label_b }}</button>
+  </div>
+</main>
+{% endblock %}

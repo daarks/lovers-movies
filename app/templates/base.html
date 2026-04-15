@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="view-transition" content="same-origin">
+  <meta name="theme-color" content="#6B21A8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>{% block title %}Nossa Lista{% endblock %} — Filmes & Séries</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="has-bottom-nav {% block body_class %}{% endblock %}" data-genre-theme="{{ data_genre_theme|default('default') }}" data-profile-label-a="{{ profile_label_a|e }}" data-profile-label-b="{{ profile_label_b|e }}">
+  <div id="app-toast-host" class="app-toast-host" aria-live="polite"></div>
+
+  <div id="nav-drawer-backdrop" class="nav-drawer-backdrop" aria-hidden="true"></div>
+  <nav id="app-drawer" class="nav-drawer" aria-label="Menu da aplicação" aria-hidden="true">
+    <div class="nav-drawer-head">
+      <span class="nav-drawer-title">Menu</span>
+      <button type="button" class="filter-modal-close nav-drawer-close" id="nav-drawer-close" aria-label="Fechar menu">×</button>
+    </div>
+    <ul class="nav-drawer-list" role="list">
+      <li><a href="{{ url_for('suggestions_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">🍿</span> Sugestões</a></li>
+      <li><a href="{{ url_for('assistimos_hoje_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">📅</span> Assistimos hoje</a></li>
+      <li><a href="{{ url_for('conquistas_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">🏅</span> Conquistas</a></li>
+      <li><a href="{{ url_for('stats_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">📊</span> Estatísticas</a></li>
+      {% if gamification_v2_nav %}
+      <li><a href="{{ url_for('compare_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">⚖️</span> Comparar</a></li>
+      <li><a href="{{ url_for('mapa_paises_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">🌍</span> Mapa</a></li>
+      {% endif %}
+      {% if bets_enabled_nav %}
+      <li><a href="{{ url_for('bets_list_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">🎯</span> Apostas</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+
+  <header class="site-header">
+    <button type="button" class="site-header-menu-btn" id="nav-drawer-open" aria-label="Abrir menu" aria-expanded="false" aria-controls="app-drawer">
+      <span class="site-header-menu-bar" aria-hidden="true"></span>
+      <span class="site-header-menu-bar" aria-hidden="true"></span>
+      <span class="site-header-menu-bar" aria-hidden="true"></span>
+    </button>
+    <h1 class="site-logo"><a href="{{ url_for('index') }}" class="{% block header_logo_class %}nav-preserve-scroll{% endblock %}">🎬 Nossa Lista</a></h1>
+    <div class="site-header-greet" id="site-header-greet" hidden>
+      <span class="site-header-hello-prefix">Olá, </span>
+      <button type="button" class="site-header-user-name top-subnav-link--ghost" id="active-user-badge" hidden></button>
+      <span class="site-header-hello-suffix">!</span>
+    </div>
+  </header>
+  {% block body %}{% endblock %}
+
+  <dialog id="active-user-dialog" class="active-user-dialog" aria-labelledby="active-user-title">
+    <div class="active-user-dialog-inner">
+      <h2 id="active-user-title" class="active-user-dialog-title">Quem está usando agora?</h2>
+      <p class="text-muted active-user-dialog-hint">Salvo neste aparelho para Swipe e apostas.</p>
+      <div class="active-user-dialog-actions">
+        <button type="button" class="btn-primary active-user-pick" data-profile-slug="a">{{ profile_label_a }}</button>
+        <button type="button" class="btn-primary active-user-pick" data-profile-slug="b">{{ profile_label_b }}</button>
+      </div>
+    </div>
+  </dialog>
+
+  <nav class="bottom-nav" aria-label="Navegação principal">
+    <a href="{{ url_for('index') }}" class="bottom-nav-link{% block nav_assistir %}{% endblock %}">
+      <span class="bottom-nav-icon" aria-hidden="true">▶</span>
+      <span class="bottom-nav-label">Assistir</span>
+    </a>
+    <a href="{{ url_for('history') }}" class="bottom-nav-link{% block nav_history %}{% endblock %}">
+      <span class="bottom-nav-icon" aria-hidden="true">📋</span>
+      <span class="bottom-nav-label">Histórico</span>
+    </a>
+    <a href="{{ url_for('watch_later_page') }}" class="bottom-nav-link{% block nav_watch_later %}{% endblock %}">
+      <span class="bottom-nav-icon" aria-hidden="true">⏳</span>
+      <span class="bottom-nav-label">Ver depois</span>
+    </a>
+    <a href="{{ url_for('couple_swipe_page') }}" class="bottom-nav-link{% block nav_swipe %}{% endblock %}">
+      <span class="bottom-nav-icon" aria-hidden="true">💜</span>
+      <span class="bottom-nav-label">Swipe</span>
+    </a>
+    {% if gamification_v2_nav %}
+    <a href="{{ url_for('profile_gamification_page') }}" class="bottom-nav-link{% block nav_profile %}{% endblock %}">
+      <span class="bottom-nav-icon" aria-hidden="true">👤</span>
+      <span class="bottom-nav-label">Perfil</span>
+    </a>
+    {% endif %}
+  </nav>
+  <span hidden>{% block nav_conquistas %}{% endblock %}{% block nav_stats %}{% endblock %}</span>
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js" crossorigin="anonymous" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}").catch(function () {});
+      });
+    }
+  </script>
+  {% block scripts_extra %}{% endblock %}
+</body>
+</html>

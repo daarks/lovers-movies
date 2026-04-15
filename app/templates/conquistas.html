@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Conquistas{% endblock %}
+{% block nav_conquistas %} is-active{% endblock %}
+{% block head_extra %}
+  <meta name="view-transition" content="same-origin">
+{% endblock %}
+{% block body %}
+<main class="conquistas-main">
+  <h1 class="section-title">Conquistas</h1>
+  <p class="text-muted">Progresso do catálogo de gamificação — desbloqueie XP e marcos ao assistir.</p>
+  <div class="conquistas-filter" role="tablist" aria-label="Filtrar conquistas">
+    <button type="button" class="conquistas-filter-btn is-active" data-filter="all" role="tab" aria-selected="true">Todas</button>
+    <button type="button" class="conquistas-filter-btn" data-filter="geral" role="tab" aria-selected="false">Geral</button>
+    <button type="button" class="conquistas-filter-btn" data-filter="sazonal" role="tab" aria-selected="false">Conquistas sazonais</button>
+  </div>
+
+  <ul class="conquistas-list" role="list">
+    {% for row in achievements %}
+    {% set ach = row.catalog %}
+    {% set tgt = row.target %}
+    {% set prog = row.progress %}
+    {% set done = row.unlocked_at is not none %}
+    {% set ach_group = "sazonal" if (ach.rarity or "common")|lower == "seasonal" else "geral" %}
+    <li class="conquistas-card filter-modal-panel--glass{% if done %} conquistas-card--unlocked{% endif %}" data-ach-group="{{ ach_group }}">
+      <div class="conquistas-card-head">
+        <span class="conquistas-icon" aria-hidden="true">{{ ach.icon or "🏅" }}</span>
+        <div>
+          <h2 class="conquistas-title">{{ ach.title }}</h2>
+          <p class="conquistas-desc text-muted">{{ ach.description }}</p>
+        </div>
+      </div>
+      {% if done %}
+      <p class="conquistas-badge">Desbloqueada · +{{ ach.xp_reward or 0 }} XP</p>
+      {% elif tgt %}
+      {% set pct = (100 * prog / tgt) if tgt > 0 else 0 %}
+      {% set now = prog if prog < tgt else tgt %}
+      <div class="conquistas-progress" role="progressbar" aria-valuemin="0" aria-valuemax="{{ tgt }}" aria-valuenow="{{ now }}">
+        <div class="conquistas-progress-bar" style="width: {{ pct|round(1) }}%"></div>
+      </div>
+      <p class="conquistas-progress-label">{{ prog }} / {{ tgt }}</p>
+      {% else %}
+      <p class="text-muted small">Sem barra de progresso numérica.</p>
+      {% endif %}
+      {% set rarity_key = (ach.rarity or "common")|lower %}
+      {% set rarity_label = "Comum" %}
+      {% if rarity_key == "rare" %}
+      {% set rarity_label = "Raro" %}
+      {% elif rarity_key == "epic" %}
+      {% set rarity_label = "Épico" %}
+      {% elif rarity_key == "legendary" %}
+      {% set rarity_label = "Lendário" %}
+      {% elif rarity_key == "seasonal" %}
+      {% set rarity_label = "Sazonal" %}
+      {% endif %}
+      <p class="conquistas-rarity"><span class="chip conquistas-rarity-chip conquistas-rarity-chip--{{ rarity_key }}">{{ rarity_label }}</span></p>
+    </li>
+    {% endfor %}
+  </ul>
+</main>
+{% endblock %}
+{% block scripts_extra %}
+<script>
+(function () {
+  var root = document.querySelector(".conquistas-main");
+  if (!root) return;
+  var buttons = root.querySelectorAll(".conquistas-filter-btn");
+  var cards = root.querySelectorAll("[data-ach-group]");
+  if (!buttons.length || !cards.length) return;
+
+  function applyFilter(kind) {
+    cards.forEach(function (card) {
+      var group = card.getAttribute("data-ach-group") || "geral";
+      var show = kind === "all" || kind === group;
+      card.classList.toggle("is-filter-hidden", !show);
+    });
+  }
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var kind = btn.getAttribute("data-filter") || "all";
+      buttons.forEach(function (b) {
+        var active = b === btn;
+        b.classList.toggle("is-active", active);
+        b.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      applyFilter(kind);
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Estatísticas{% endblock %}
+{% block body_class %}page-stats{% endblock %}
+{% block nav_stats %} is-active{% endblock %}
+{% block body %}
+<main class="stats-main">
+  <h1 class="stats-page-title">Estatísticas</h1>
+  <p class="stats-page-sub">Resumo do que já assistimos — com base na nossa lista.</p>
+
+  {% if stats.total == 0 %}
+  <p class="empty-state">Ainda não há dados. Avalie filmes ou séries no histórico para ver gráficos aqui.</p>
+  <p class="stats-link-back"><a href="{{ url_for('history') }}">Ir ao histórico</a></p>
+  {% else %}
+
+  <section class="stats-section" aria-labelledby="stats-counts-title">
+    <h2 class="stats-section-title" id="stats-counts-title">Quantidade</h2>
+    <div class="stats-tiles">
+      <div class="stats-tile">
+        <span class="stats-tile-value">{{ stats.total }}</span>
+        <span class="stats-tile-label">Títulos no total</span>
+      </div>
+      <div class="stats-tile">
+        <span class="stats-tile-value">{{ stats.n_movie }}</span>
+        <span class="stats-tile-label">Filmes</span>
+      </div>
+      <div class="stats-tile">
+        <span class="stats-tile-value">{{ stats.n_tv }}</span>
+        <span class="stats-tile-label">Séries</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats-section" aria-labelledby="stats-media-title">
+    <h2 class="stats-section-title" id="stats-media-title">Filme × série</h2>
+    <p class="stats-muted">Percentual do total de títulos (cada entrada conta uma vez).</p>
+    <div class="stats-media-bars">
+      <div class="stat-row stat-row--media">
+        <span class="stat-name">Filmes</span>
+        <div class="stat-bar-track" aria-hidden="true"><div class="stat-bar-fill stat-bar-fill--movie" style="width: {{ stats.pct_movie }}%"></div></div>
+        <span class="stat-pct">{{ stats.pct_movie }}%</span>
+      </div>
+      <div class="stat-row stat-row--media">
+        <span class="stat-name">Séries</span>
+        <div class="stat-bar-track" aria-hidden="true"><div class="stat-bar-fill stat-bar-fill--tv" style="width: {{ stats.pct_tv }}%"></div></div>
+        <span class="stat-pct">{{ stats.pct_tv }}%</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats-section" aria-labelledby="stats-genre-title">
+    <h2 class="stats-section-title" id="stats-genre-title">Por gênero</h2>
+    <p class="stats-muted">Percentual de títulos em que o gênero aparece (um título pode ter vários gêneros).</p>
+    {% if stats.genres %}
+    <div class="stats-genre-list">
+      {% for g in stats.genres %}
+      <div class="stat-row">
+        <span class="stat-name" title="{{ g.count }} título(s)">{{ g.name }}</span>
+        <div class="stat-bar-track" aria-hidden="true"><div class="stat-bar-fill" style="width: {{ g.percent }}%"></div></div>
+        <span class="stat-pct">{{ g.percent }}%</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="stats-muted">Nenhum gênero salvo nos itens. Adicione avaliações com dados do TMDB para preencher.</p>
+    {% endif %}
+  </section>
+
+  {% endif %}
+</main>
+{% endblock %}

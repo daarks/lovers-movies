@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Aposta — {{ hero.title }}{% endblock %}
+{% block body_class %}page-details page-apostas-detalhe{% endblock %}
+{% block header_logo_class %}nav-preserve-scroll{% endblock %}
+{% block body %}
+
+<a href="{{ url_for('bets_list_page') }}" class="details-back nav-preserve-scroll">&#8592; Apostas</a>
+
+<section class="details-hero">
+  {% if hero.backdrop_path %}
+  <img class="details-backdrop" src="https://image.tmdb.org/t/p/w780{{ hero.backdrop_path }}" alt="" loading="eager">
+  {% endif %}
+  <div class="details-hero-gradient" aria-hidden="true"></div>
+  <div class="details-hero-inner">
+    <div class="details-poster">
+      {% if hero.poster_path %}
+      <img src="https://image.tmdb.org/t/p/w342{{ hero.poster_path }}" alt="" loading="eager">
+      {% else %}
+      <div class="details-poster-placeholder" aria-hidden="true">🎬</div>
+      {% endif %}
+    </div>
+    <div class="details-head">
+      <h1 class="details-title">{{ hero.title }}</h1>
+      <div class="details-meta-row">
+        <span class="badge">{% if hero.media_type == 'movie' %}Filme{% else %}Série{% endif %}</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="details-content">
+  <section class="filter-modal-panel--glass apostas-detail-panel">
+    <h2 class="section-title">Detalhe da aposta</h2>
+
+    <dl class="apostas-detail-dl">
+      <dt>Palpite — {{ profile_label_a }}</dt>
+      <dd>{% if pred_by_slug['a'] is not none %}{{ '%g'|format(pred_by_slug['a'])|replace('.', ',') }}{% else %}—{% endif %} <span class="text-muted">(0,5 a 10)</span></dd>
+      <dt>Palpite — {{ profile_label_b }}</dt>
+      <dd>{% if pred_by_slug['b'] is not none %}{{ '%g'|format(pred_by_slug['b'])|replace('.', ',') }}{% else %}—{% endif %} <span class="text-muted">(0,5 a 10)</span></dd>
+      <dt>Nota do casal (lista)</dt>
+      <dd>{% if joint_rating is not none %}{{ '%g'|format(joint_rating)|replace('.', ',') }}{% else %}Ainda sem nota na lista{% endif %}</dd>
+    </dl>
+
+    <h3 class="subsection-title">Por perfil</h3>
+    <ul class="apostas-detail-list">
+      {% for b in bets %}
+      {% set pr = profiles.get(b.profile_id) %}
+      <li class="apostas-detail-row">
+        <strong>{{ pr.display_name if pr else 'Perfil' }}</strong>
+        · Palpite: {{ '%g'|format(b.predicted_rating)|replace('.', ',') }}
+        · <span class="text-muted">{{ b.status|bet_status_pt }}</span>
+        {% if b.status == 'resolved' and b.actual_rating is not none %}
+        · Nota considerada: {{ '%g'|format(b.actual_rating)|replace('.', ',') }}
+        {% endif %}
+        {% if b.won == true %}<span class="apostas-win">Venceu o palpite</span>{% elif b.won == false %}<span class="text-muted">Não foi o mais próximo</span>{% elif b.status == 'resolved' %}<span class="text-muted">Empate / empate técnico</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+
+    {% if winner_name and joint_rating is not none and winner_diff is not none %}
+    <p class="apostas-winner-line"><strong>{{ winner_name }}</strong> vence com uma diferença de <strong>{{ '%g'|format(winner_diff)|replace('.', ',') }}</strong> em relação à nota do casal.</p>
+    {% elif winner_name and joint_rating is none %}
+    <p class="text-muted">Quando existir nota do casal na lista, mostramos aqui a diferença do vencedor.</p>
+    {% endif %}
+
+    <p class="apostas-detail-more"><a href="{{ url_for('details', media_type=hero.media_type, tmdb_id=hero.tmdb_id) }}" class="btn-secondary nav-preserve-scroll">Ver página completa do título</a></p>
+  </section>
+</div>
+{% endblock %}

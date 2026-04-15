@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Mapa de países{% endblock %}
+{% block body_class %}page-mapa{% endblock %}
+{% block head_extra %}
+  <meta name="view-transition" content="same-origin">
+{% endblock %}
+{% block body %}
+<main class="mapa-main">
+  <h1 class="section-title">Mapa de países</h1>
+  <p class="text-muted">Países de produção dos títulos na vossa lista (metadados TMDB). Toque num país roxo para ver quantos títulos contam com esse país.</p>
+
+  <div id="mapa-svg-wrap" class="mapa-svg-wrap" data-svg-url="{{ url_for('static', filename='world-countries.svg') }}">
+    <p class="text-muted" id="mapa-svg-loading">A carregar mapa…</p>
+  </div>
+  <p class="mapa-attrib text-muted">Mapa: <a href="https://commons.wikimedia.org/wiki/File:World_map_-_low_resolution.svg" rel="noopener noreferrer" target="_blank">Wikimedia Commons</a> (domínio público).</p>
+
+  <script type="application/json" id="mapa-countries-data">{{ countries|tojson }}</script>
+
+  {% if countries %}
+  <section class="mapa-list-section" aria-labelledby="mapa-list-title">
+    <h2 id="mapa-list-title" class="subsection-title">Resumo</h2>
+    <div class="mapa-grid">
+      {% for c in countries %}
+      <div class="mapa-chip" data-iso="{{ c.iso }}" data-count="{{ c.count }}" data-label="{{ c.label_pt|e }}">
+        <span class="mapa-iso">{{ c.iso }}</span>
+        <span class="mapa-count">{{ c.count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}
+  <p class="text-muted">Ainda não há países no snapshot — adicione filmes ou séries pela página de detalhes para gravar metadados.</p>
+  {% endif %}
+</main>
+
+<dialog id="mapa-country-dialog" class="mapa-country-dialog" aria-labelledby="mapa-dialog-title">
+  <div class="mapa-country-dialog-inner filter-modal-panel--glass">
+    <h2 id="mapa-dialog-title" class="section-title">País</h2>
+    <p id="mapa-dialog-body" class="mapa-dialog-body"></p>
+    <button type="button" class="btn-primary mapa-dialog-close" id="mapa-dialog-close">Fechar</button>
+  </div>
+</dialog>
+{% endblock %}
+{% block scripts_extra %}
+<script>
+(function () {
+  var wrap = document.getElementById("mapa-svg-wrap");
+  var dataEl = document.getElementById("mapa-countries-data");
+  var dlg = document.getElementById("mapa-country-dialog");
+  var dlgBody = document.getElementById("mapa-dialog-body");
+  var dlgClose = document.getElementById("mapa-dialog-close");
+  var loading = document.getElementById("mapa-svg-loading");
+  if (!wrap || !dataEl) return;
+
+  var countries = [];
+  try {
+    countries = JSON.parse(dataEl.textContent || "[]");
+  } catch (e) {
+    countries = [];
+  }
+
+  var pathToCountry = {};
+  countries.forEach(function (c) {
+    var n = parseInt(c.count, 10) || 0;
+    if (n <= 0) return;
+    (c.path_ids || []).forEach(function (pid) {
+      if (pid) pathToCountry[pid] = c;
+    });
+  });
+
+  function queryPathById(svg, id) {
+    if (!svg || !id) return null;
+    if (typeof CSS !== "undefined" && CSS.escape) {
+      try {
+        return svg.querySelector("#" + CSS.escape(id));
+      } catch (e) {
+        /* continue */
+      }
+    }
+    var safe = id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return svg.querySelector('[id="' + safe + '"]');
+  }
+
+  function esc(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function showCountry(c) {
+    if (!dlg || !dlgBody) return;
+    var n = parseInt(c.count, 10) || 0;
+    var label = c.label_pt || c.iso;
+    dlgBody.innerHTML =
+      "<strong>" +
+      esc(label) +
+      "</strong> (" +
+      esc(c.iso) +
+      "): <strong>" +
+      n +
+      "</strong> " +
+      (n === 1 ? "título" : "títulos") +
+      " com produção neste país.";
+    if (typeof dlg.showModal === "function") dlg.showModal();
+  }
+
+  if (dlgClose && dlg) {
+    dlgClose.addEventListener("click", function () {
+      if (typeof dlg.close === "function") dlg.close();
+    });
+  }
+
+  var url = wrap.getAttribute("data-svg-url");
+  if (!url) {
+    if (loading) loading.textContent = "Mapa indisponível.";
+    return;
+  }
+
+  fetch(url)
+    .then(function (r) {
+      return r.text();
+    })
+    .then(function (txt) {
+      if (loading) loading.remove();
+      var doc = new DOMParser().parseFromString(txt, "image/svg+xml");
+      var svg = doc.querySelector("svg");
+      if (!svg) {
+        wrap.innerHTML = '<p class="text-muted">Não foi possível ler o mapa.</p>';
+        return;
+      }
+      svg.classList.add("mapa-world-svg");
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", "Mapa mundial");
+      wrap.innerHTML = "";
+      wrap.appendChild(svg);
+
+      countries.forEach(function (c) {
+        var n = parseInt(c.count, 10) || 0;
+        if (n <= 0) return;
+        (c.path_ids || []).forEach(function (pid) {
+          if (!pid) return;
+          var node = queryPathById(svg, pid);
+          if (!node) return;
+          node.classList.add("mapa-land--watched");
+          node.setAttribute("data-map-count", String(n));
+          node.style.cursor = "pointer";
+        });
+      });
+
+      svg.addEventListener("click", function (ev) {
+        var t = ev.target;
+        if (!t || !t.id) return;
+        var c = pathToCountry[t.id];
+        if (!c) return;
+        var n = parseInt(c.count, 10) || 0;
+        if (n <= 0) return;
+        showCountry(c);
+      });
+    })
+    .catch(function () {
+      if (loading) loading.textContent = "Erro ao carregar o mapa.";
+    });
+
+  document.querySelectorAll(".mapa-chip").forEach(function (chip) {
+    chip.style.cursor = "pointer";
+    chip.addEventListener("click", function () {
+      var iso = chip.getAttribute("data-iso");
+      var cnt = parseInt(chip.getAttribute("data-count") || "0", 10);
+      var label = chip.getAttribute("data-label") || iso;
+      showCountry({ iso: iso, count: cnt, label_pt: label });
+    });
+  });
+})();
+</script>
+{% endblock %}

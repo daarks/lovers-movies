@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Perfil do casal{% endblock %}
+{% block body_class %}page-perfil{% endblock %}
+{% block nav_profile %} is-active{% endblock %}
+{% block head_extra %}
+  <meta name="view-transition" content="same-origin">
+{% endblock %}
+{% block body %}
+<main class="perfil-main">
+  <section class="perfil-hero filter-modal-panel--glass">
+    <h1 class="section-title">Perfil do casal</h1>
+    <p class="text-muted">Acompanhe nível, XP e evolução das conquistas.</p>
+    {% include "perfil_xp_fragment.html" %}
+  </section>
+
+  {% if game_season and seasons_enabled_nav %}
+  <section class="perfil-season filter-modal-panel--glass">
+    <h2 class="section-title"><a href="{{ url_for('season_info_page') }}" class="nav-preserve-scroll">Temporada ativa</a></h2>
+    <p><span class="badge">{{ game_season.label }}</span> {{ game_season.title }} {{ game_season.trophy_icon }}</p>
+    <p class="text-muted small"><a href="{{ url_for('season_info_page') }}" class="nav-preserve-scroll">Entender regras, duração e exemplos da temporada</a></p>
+    {% if season_scores %}
+    <ul class="perfil-season-scores">
+      {% for sc in season_scores %}
+        {% set prof = profiles|selectattr("id", "equalto", sc.profile_id)|first %}
+        <li><strong>{{ prof.display_name if prof else sc.profile_id }}</strong>: {{ sc.points }} pts</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted">Ainda sem pontuação nesta temporada.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="perfil-achievements filter-modal-panel--glass">
+    <h2 class="section-title">Conquistas recentes</h2>
+    {% if achievements_unlocked %}
+    <ul class="perfil-ach-list">
+      {% for a in achievements_unlocked %}
+      <li class="perfil-ach-item">
+        <span class="perfil-ach-icon" aria-hidden="true">{{ a.achievement_id|achievement_icon_pt }}</span>
+        <span class="perfil-ach-id">{{ a.achievement_id|achievement_title_pt }}</span>
+        <time class="text-muted" datetime="{{ a.unlocked_at.isoformat() if a.unlocked_at else '' }}">{{ a.unlocked_at.strftime('%d/%m/%Y') if a.unlocked_at else '' }}</time>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted">Nenhuma conquista desbloqueada ainda.</p>
+    {% endif %}
+  </section>
+
+  <section class="perfil-xp-ledger filter-modal-panel--glass">
+    <h2 class="section-title">Histórico de XP</h2>
+    {% if xp_recent %}
+    <ul class="perfil-ledger">
+      {% for e in xp_recent %}
+      <li><span class="perfil-ledger-amt">+{{ e.amount }}</span> <span class="text-muted">{{ e.reason|xp_reason_pt }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted">Sem lançamentos ainda.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
