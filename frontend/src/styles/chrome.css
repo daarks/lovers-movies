@@ -1,0 +1,111 @@
+@import "./tokens.css";
+
+/* Progressive enhancement: when React chrome is mounted, suppress the legacy server toast host
+   and replace with the DS toast. */
+.has-js-chrome .app-toast-host {
+  display: none !important;
+}
+
+/* Magnetic indicator injected into .bottom-nav */
+.bottom-nav {
+  position: relative;
+}
+
+.bottom-nav .bottom-nav-indicator {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 0;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(168, 85, 247, 0.55), rgba(250, 204, 21, 0.35));
+  box-shadow: 0 10px 28px rgba(168, 85, 247, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.9;
+  will-change: left, width;
+}
+
+.bottom-nav .bottom-nav-link {
+  position: relative;
+  z-index: 1;
+}
+
+.has-js-chrome .bottom-nav .bottom-nav-link.is-active,
+.has-js-chrome .bottom-nav .bottom-nav-link[aria-current="page"] {
+  color: var(--rx-text, #fff);
+}
+
+/* Toast host (DS) - global placement */
+.rx-toast-host {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  pointer-events: none;
+  width: min(420px, calc(100% - 2rem));
+}
+
+.rx-toast {
+  pointer-events: auto;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(20, 22, 34, 0.92);
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  box-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--rx-text, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.rx-toast--success {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(20, 22, 34, 0.92));
+}
+
+.rx-toast--error {
+  border-color: rgba(248, 113, 113, 0.5);
+  background: linear-gradient(135deg, rgba(248, 113, 113, 0.18), rgba(20, 22, 34, 0.92));
+}
+
+.rx-toast--accent {
+  border-color: rgba(250, 204, 21, 0.5);
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.18), rgba(20, 22, 34, 0.92));
+}
+
+.rx-toast-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.rx-toast-desc {
+  margin: 0;
+  color: var(--rx-text-muted, rgba(255, 255, 255, 0.72));
+  font-size: 0.85rem;
+}
+
+/* Drawer polish when React enhancer is active: smoother shadow & subtle blur */
+.has-js-chrome .nav-drawer {
+  box-shadow: 20px 0 60px -25px rgba(0, 0, 0, 0.65);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.has-js-chrome .nav-drawer-backdrop {
+  backdrop-filter: blur(6px) saturate(1.05);
+  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bottom-nav .bottom-nav-indicator {
+    transition: none !important;
+  }
+}

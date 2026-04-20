@@ -6,8 +6,9 @@ import os
 import random
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 from pathlib import Path
 
 import requests
@@ -22,6 +23,7 @@ from flask import (
     request,
     url_for,
 )
+from markupsafe import Markup
 from flask_caching import Cache
 from sqlalchemy import desc, inspect, text
 
@@ -1078,6 +1080,70 @@ def create_app() -> Flask:
     app.template_filter("xp_reason_pt")(xp_reason_pt)
     app.template_filter("bet_status_pt")(bet_status_pt)
 
+    # ---- Helper Vite ---------------------------------------------------
+    # Lê frontend/app/static/build/manifest.json e devolve as tags <script>/<link>
+    # para montar a ilha React do entry pedido. Em dev e prod o manifest é o
+    # mesmo formato (vite build --watch grava manifest.json).
+    _vite_manifest_cache: dict[str, Any] = {"mtime": 0, "data": None}
+
+    def _vite_manifest() -> dict[str, Any]:
+        manifest_path = Path(app.static_folder or "") / "build" / "manifest.json"
+        if not manifest_path.is_file():
+            return {}
+        try:
+            mtime = manifest_path.stat().st_mtime
+        except OSError:
+            return {}
+        cached = _vite_manifest_cache
+        if cached.get("mtime") == mtime and cached.get("data") is not None:
+            return cached["data"]  # type: ignore[return-value]
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        cached["mtime"] = mtime
+        cached["data"] = data if isinstance(data, dict) else {}
+        return cached["data"]  # type: ignore[return-value]
+
+    def vite_entry_tags(entry_name: str) -> Markup:
+        """Retorna <link rel=modulepreload> + <script type=module> da entrada."""
+        manifest = _vite_manifest()
+        if not manifest:
+            msg = (
+                f"<!-- vite: build ausente para entry '{entry_name}'. "
+                "Rode `npm run build` em frontend/. -->"
+            )
+            return Markup(msg)
+        key = f"src/entries/{entry_name}.tsx"
+        entry = manifest.get(key)
+        if not entry:
+            return Markup(
+                f"<!-- vite: entry '{entry_name}' não encontrado no manifest. -->"
+            )
+        prefix = "/static/build/"
+        parts: list[str] = []
+        for css in entry.get("css") or []:
+            parts.append(
+                f'<link rel="stylesheet" href="{prefix}{css}">'
+            )
+        for imp_key in entry.get("imports") or []:
+            imp = manifest.get(imp_key) or {}
+            imp_file = imp.get("file")
+            if imp_file:
+                parts.append(
+                    f'<link rel="modulepreload" href="{prefix}{imp_file}">'
+                )
+        file_name = entry.get("file")
+        if file_name:
+            parts.append(
+                f'<script type="module" src="{prefix}{file_name}"></script>'
+            )
+        return Markup("\n".join(parts))
+
+    app.jinja_env.globals["vite_entry_tags"] = vite_entry_tags
+    # --------------------------------------------------------------------
+
     def _home_fetch_trending(_headers_unused):
         rows = []
         data = _tmdb_json_cached(
@@ -1145,15 +1211,35 @@ def create_app() -> Flask:
         return rows
 
     def _home_tmdb_carousels(token):
-        """Trending + now_playing + upcoming em paralelo (menor latência na home)."""
+        """Trending + now_playing + upcoming em paralelo, com teto de tempo total.
+
+        Evita travar a home/API se o TMDB ou a rede ficarem presos: após ~22s
+        retorna listas parciais (vazias para futures que não terminaram).
+        """
         headers = _tmdb_headers(token)
         with ThreadPoolExecutor(max_workers=3) as pool:
             f_tr = pool.submit(_home_fetch_trending, headers)
             f_np = pool.submit(_home_fetch_movie_list, "now_playing", headers)
             f_up = pool.submit(_home_fetch_movie_list, "upcoming", headers)
-            trending = f_tr.result()
-            now_playing = f_np.result()
-            upcoming = f_up.result()
+            futures = (f_tr, f_np, f_up)
+            done, not_done = wait(futures, timeout=22.0)
+
+            def _safe_result(f):
+                if f not in done:
+                    return []
+                try:
+                    return f.result(timeout=0) or []
+                except Exception:
+                    return []
+
+            trending = _safe_result(f_tr)
+            now_playing = _safe_result(f_np)
+            upcoming = _safe_result(f_up)
+            for f in not_done:
+                try:
+                    f.cancel()
+                except Exception:
+                    pass
         return trending, now_playing, upcoming
 
     # --- Páginas e API interna ---
@@ -1185,6 +1271,44 @@ def create_app() -> Flask:
             upcoming_items=upcoming_items,
         )
 
+    @app.get("/api/home/feed")
+    def api_home_feed():
+        """Payload consolidado para a HomeApp React (trending + now_playing + upcoming + recent)."""
+        token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
+        trending_items: list[dict[str, Any]] = []
+        now_playing_items: list[dict[str, Any]] = []
+        upcoming_items: list[dict[str, Any]] = []
+        if token:
+            trending_items, now_playing_items, upcoming_items = (
+                _home_tmdb_carousels(token)
+            )
+        recent_items = (
+            WatchedItem.query.order_by(WatchedItem.added_at.desc()).limit(10).all()
+        )
+        recent_payload = [
+            {
+                "id": it.id,
+                "tmdb_id": it.tmdb_id,
+                "title": it.title,
+                "media_type": it.media_type,
+                "poster_path": getattr(it, "poster_path", None),
+                "rating": getattr(it, "rating", None),
+                "added_at": it.added_at.isoformat() if getattr(it, "added_at", None) else None,
+            }
+            for it in recent_items
+        ]
+        resp = jsonify(
+            {
+                "trending": trending_items,
+                "now_playing": now_playing_items,
+                "upcoming": upcoming_items,
+                "recent": recent_payload,
+                "hero_message": "O que vamos ver hoje baby?",
+            }
+        )
+        resp.headers["Cache-Control"] = "private, max-age=120"
+        return resp
+
     @app.get("/historico")
     def history():
         """Lista avaliada + filtros."""
@@ -1197,11 +1321,201 @@ def create_app() -> Flask:
         items = WatchLaterItem.query.order_by(WatchLaterItem.added_at.desc()).all()
         return render_template("watch_later.html", items=items)
 
+    def _parse_cursor_limit(
+        default_limit: int = 60,
+        max_limit: int = 500,
+    ) -> tuple[str | None, int]:
+        """Lê ?cursor= e ?limit= dos query params (cursor = ISO datetime).
+
+        Quando nem cursor nem limit forem informados, retorna default_limit —
+        mas o endpoint pode passar um default alto para preservar o comportamento
+        "retornar tudo" esperado por clientes legados.
+        """
+        cursor_raw = (request.args.get("cursor") or "").strip() or None
+        try:
+            limit = int(request.args.get("limit", default_limit))
+        except (TypeError, ValueError):
+            limit = default_limit
+        limit = max(1, min(limit, max_limit))
+        return cursor_raw, limit
+
+    @app.get("/api/history")
+    def api_history_list():
+        """Lista do histórico (avaliados) com paginação por cursor (added_at)."""
+        cursor_raw, limit = _parse_cursor_limit(default_limit=500)
+        total = WatchedItem.query.count()
+        q = WatchedItem.query.order_by(WatchedItem.added_at.desc())
+        if cursor_raw:
+            try:
+                cursor_dt = datetime.fromisoformat(cursor_raw)
+                q = q.filter(WatchedItem.added_at < cursor_dt)
+            except ValueError:
+                pass
+        rows = q.limit(limit + 1).all()
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        next_cursor = (
+            items[-1].added_at.isoformat()
+            if (has_more and items and items[-1].added_at)
+            else None
+        )
+        payload = [
+            {
+                "id": it.id,
+                "tmdb_id": it.tmdb_id,
+                "media_type": it.media_type,
+                "title": it.title,
+                "original_title": it.original_title,
+                "poster_path": it.poster_path,
+                "backdrop_path": it.backdrop_path,
+                "release_date": it.release_date,
+                "genres": it.genres or "",
+                "vote_average": it.vote_average,
+                "rating": float(it.rating) if it.rating is not None else None,
+                "added_at": it.added_at.isoformat() if it.added_at else None,
+            }
+            for it in items
+        ]
+        return jsonify(
+            {
+                "items": payload,
+                "total": total,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+            }
+        )
+
+    @app.get("/api/watch-later")
+    def api_watch_later_list():
+        """Fila 'assistir depois' com paginação por cursor (added_at)."""
+        cursor_raw, limit = _parse_cursor_limit(default_limit=500)
+        total = WatchLaterItem.query.count()
+        q = WatchLaterItem.query.order_by(WatchLaterItem.added_at.desc())
+        if cursor_raw:
+            try:
+                cursor_dt = datetime.fromisoformat(cursor_raw)
+                q = q.filter(WatchLaterItem.added_at < cursor_dt)
+            except ValueError:
+                pass
+        rows = q.limit(limit + 1).all()
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        next_cursor = (
+            items[-1].added_at.isoformat()
+            if (has_more and items and items[-1].added_at)
+            else None
+        )
+        payload = [
+            {
+                "id": it.id,
+                "tmdb_id": it.tmdb_id,
+                "media_type": it.media_type,
+                "title": it.title,
+                "original_title": it.original_title,
+                "overview": it.overview,
+                "poster_path": it.poster_path,
+                "backdrop_path": it.backdrop_path,
+                "release_date": it.release_date,
+                "genres": it.genres or "",
+                "vote_average": it.vote_average,
+                "added_at": it.added_at.isoformat() if it.added_at else None,
+            }
+            for it in items
+        ]
+        return jsonify(
+            {
+                "items": payload,
+                "total": total,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+            }
+        )
+
     @app.get("/estatisticas")
     def stats_page():
         items = WatchedItem.query.all()
         stats = _watched_stats(items)
         return render_template("stats.html", stats=stats)
+
+    @app.get("/api/stats/overview")
+    def api_stats_overview():
+        """Agrega dados de estatísticas para o dashboard React."""
+        items = WatchedItem.query.order_by(WatchedItem.added_at.asc()).all()
+        base = _watched_stats(items)
+
+        ratings = [float(i.rating) for i in items if i.rating is not None]
+        avg_rating = round(sum(ratings) / len(ratings), 2) if ratings else 0.0
+        rating_buckets = {str(i): 0 for i in range(1, 11)}
+        for r in ratings:
+            key = str(max(1, min(10, int(round(r)))))
+            rating_buckets[key] = rating_buckets.get(key, 0) + 1
+
+        monthly: dict[str, dict] = {}
+        for it in items:
+            if not it.added_at:
+                continue
+            key = it.added_at.strftime("%Y-%m")
+            slot = monthly.setdefault(key, {"key": key, "total": 0, "movie": 0, "tv": 0})
+            slot["total"] += 1
+            if it.media_type == "movie":
+                slot["movie"] += 1
+            elif it.media_type == "tv":
+                slot["tv"] += 1
+        monthly_rows = [monthly[k] for k in sorted(monthly.keys())][-12:]
+
+        heatmap = [[0] * 7 for _ in range(24)]
+        dow_counts = [0] * 7
+        for it in items:
+            if not it.added_at:
+                continue
+            dow = it.added_at.weekday()
+            dow_idx = (dow + 1) % 7
+            hour = it.added_at.hour
+            heatmap[hour][dow_idx] += 1
+            dow_counts[dow_idx] += 1
+
+        top_rated = sorted(
+            [i for i in items if i.rating is not None],
+            key=lambda i: (-(i.rating or 0), i.title or ""),
+        )[:8]
+        top_rated_rows = [
+            {
+                "id": i.id,
+                "tmdb_id": i.tmdb_id,
+                "media_type": i.media_type,
+                "title": i.title,
+                "poster_path": i.poster_path,
+                "rating": i.rating,
+                "genres": i.genres or "",
+            }
+            for i in top_rated
+        ]
+
+        decade_counts: dict[str, int] = {}
+        for it in items:
+            rd = (it.release_date or "").strip()
+            if len(rd) < 4 or not rd[:4].isdigit():
+                continue
+            y = int(rd[:4])
+            dec = f"{(y // 10) * 10}s"
+            decade_counts[dec] = decade_counts.get(dec, 0) + 1
+        decade_rows = [
+            {"label": k, "count": v}
+            for k, v in sorted(decade_counts.items(), key=lambda x: x[0])
+        ]
+
+        return jsonify(
+            {
+                **base,
+                "avg_rating": avg_rating,
+                "rating_distribution": rating_buckets,
+                "monthly": monthly_rows,
+                "heatmap": heatmap,
+                "dow_counts": dow_counts,
+                "top_rated": top_rated_rows,
+                "decades": decade_rows,
+            }
+        )
 
     @app.get("/suggestions")
     def suggestions_page():
@@ -1461,7 +1775,7 @@ def create_app() -> Flask:
 
         url = f"{TMDB_BASE}/{media_type}/{tmdb_id}"
         headers = _tmdb_headers(token)
-        append_parts = ["credits", "videos", "recommendations"]
+        append_parts = ["credits", "videos", "recommendations", "keywords"]
         if media_type == "movie":
             append_parts.append("release_dates")
         else:
@@ -1602,18 +1916,199 @@ def create_app() -> Flask:
         }
         return render_template("details.html", **context)
 
-    @app.get("/details/<media_type>/<int:tmdb_id>/ficha-tecnica")
-    def technical_sheet(media_type: str, tmdb_id: int):
-        """Página dedicada com ficha técnica completa (TMDB em pt-BR)."""
+    @app.get("/api/details/<media_type>/<int:tmdb_id>")
+    def api_details_payload(media_type: str, tmdb_id: int):
+        """Payload JSON consumido pelo DetailsApp React (hero + tabs + recs)."""
         token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
         if not token:
-            return (
-                "Configure a variável de ambiente TMDB_READ_ACCESS_TOKEN.",
-                500,
-            )
+            return jsonify({"error": "TMDB_READ_ACCESS_TOKEN ausente"}), 500
         if media_type not in ("movie", "tv"):
-            return redirect(url_for("index"))
+            return jsonify({"error": "media_type inválido"}), 400
+        url = f"{TMDB_BASE}/{media_type}/{tmdb_id}"
+        headers = _tmdb_headers(token)
+        append_parts = ["credits", "videos", "recommendations", "keywords"]
+        if media_type == "movie":
+            append_parts.append("release_dates")
+        else:
+            append_parts.append("content_ratings")
+        params = {
+            "language": TMDB_LANG,
+            "append_to_response": ",".join(append_parts),
+        }
+        try:
+            r = request_with_retry(
+                _TMDB_SESSION,
+                "GET",
+                url,
+                params=params,
+                headers=headers,
+                timeout=20.0,
+                max_attempts=3,
+            )
+            if r.status_code == 404:
+                return jsonify({"error": "não encontrado"}), 404
+            r.raise_for_status()
+            tmdb_data = r.json()
+        except requests.RequestException:
+            return jsonify({"error": "TMDB indisponível"}), 502
 
+        saved = WatchedItem.query.filter_by(
+            tmdb_id=tmdb_id, media_type=media_type
+        ).first()
+        watch_later = WatchLaterItem.query.filter_by(
+            tmdb_id=tmdb_id, media_type=media_type
+        ).first()
+
+        if media_type == "movie":
+            title = tmdb_data.get("title") or ""
+            original_title = tmdb_data.get("original_title") or ""
+            release_date = tmdb_data.get("release_date") or ""
+            runtime_mins = tmdb_data.get("runtime")
+            duration_label = f"{runtime_mins} min" if runtime_mins else None
+            certification_br = _br_certification_movie(tmdb_data.get("release_dates"))
+        else:
+            title = tmdb_data.get("name") or ""
+            original_title = tmdb_data.get("original_name") or ""
+            release_date = tmdb_data.get("first_air_date") or ""
+            seasons = tmdb_data.get("number_of_seasons")
+            duration_label = f"{seasons} temporada(s)" if seasons else None
+            certification_br = _br_certification_tv(tmdb_data.get("content_ratings"))
+
+        genres_list = [
+            g.get("name") for g in (tmdb_data.get("genres") or []) if g.get("name")
+        ]
+        credits = tmdb_data.get("credits") or {}
+        cast = [
+            {
+                "id": p.get("id"),
+                "name": p.get("name"),
+                "character": p.get("character") or "",
+                "profile_path": p.get("profile_path"),
+                "order": p.get("order") or 999,
+            }
+            for p in (credits.get("cast") or [])[:18]
+            if p.get("id")
+        ]
+        crew = credits.get("crew") or []
+        directors = [c.get("name") for c in crew if c.get("job") == "Director" and c.get("name")]
+        writers = [
+            c.get("name")
+            for c in crew
+            if c.get("department") == "Writing" and c.get("name")
+        ]
+        # deduplica preservando ordem
+        def _dedup(seq):
+            seen: set[str] = set()
+            out: list[str] = []
+            for item in seq:
+                if item and item not in seen:
+                    seen.add(item)
+                    out.append(item)
+            return out
+        directors = _dedup(directors)
+        writers = _dedup(writers)
+
+        videos = tmdb_data.get("videos") or {}
+        video_results = [
+            {
+                "id": v.get("id"),
+                "key": v.get("key"),
+                "name": v.get("name"),
+                "site": v.get("site"),
+                "type": v.get("type"),
+                "official": bool(v.get("official")),
+            }
+            for v in (videos.get("results") or [])
+            if v.get("site") == "YouTube" and v.get("key")
+        ]
+        video_results.sort(
+            key=lambda v: (0 if v["type"] == "Trailer" else 1, 0 if v["official"] else 1)
+        )
+
+        recs_raw = (tmdb_data.get("recommendations") or {}).get("results") or []
+        recommendations: list[dict[str, Any]] = []
+        for it in recs_raw:
+            tid = it.get("id")
+            if not tid:
+                continue
+            mt = it.get("media_type") or media_type
+            if mt not in ("movie", "tv"):
+                mt = media_type
+            rec_title = it.get("title") or it.get("name") or ""
+            rec_date = it.get("release_date") or it.get("first_air_date") or ""
+            recommendations.append(
+                {
+                    "id": tid,
+                    "media_type": mt,
+                    "title": rec_title,
+                    "poster_path": it.get("poster_path"),
+                    "release_date": rec_date,
+                    "vote_average": it.get("vote_average"),
+                }
+            )
+            if len(recommendations) >= 14:
+                break
+
+        keywords = [
+            {"id": k.get("id"), "name": k.get("name")}
+            for k in ((tmdb_data.get("keywords") or {}).get("keywords") or [])
+            if k.get("name")
+        ][:12]
+
+        collection_info = None
+        if media_type == "movie":
+            bc = tmdb_data.get("belongs_to_collection")
+            if isinstance(bc, dict) and bc.get("id"):
+                collection_info = {
+                    "id": int(bc["id"]),
+                    "name": (bc.get("name") or "Coleção").strip(),
+                }
+
+        return jsonify(
+            {
+                "media_type": media_type,
+                "tmdb_id": tmdb_id,
+                "title": title,
+                "original_title": original_title,
+                "tagline": (tmdb_data.get("tagline") or "").strip(),
+                "overview": tmdb_data.get("overview") or "",
+                "poster_path": tmdb_data.get("poster_path"),
+                "backdrop_path": tmdb_data.get("backdrop_path"),
+                "release_date": release_date,
+                "duration_label": duration_label,
+                "genres": genres_list,
+                "vote_average": tmdb_data.get("vote_average"),
+                "vote_count": tmdb_data.get("vote_count"),
+                "popularity": tmdb_data.get("popularity"),
+                "certification_br": certification_br,
+                "cast": cast,
+                "directors": directors,
+                "writers": writers,
+                "videos": video_results[:8],
+                "recommendations": recommendations,
+                "keywords": keywords,
+                "collection": collection_info,
+                "saved": (
+                    {
+                        "id": saved.id,
+                        "rating": float(saved.rating) if saved.rating is not None else None,
+                    }
+                    if saved
+                    else None
+                ),
+                "watch_later": (
+                    {"id": watch_later.id} if watch_later else None
+                ),
+                "theme_slug": _dominant_genre_theme_slug(genres_list),
+            }
+        )
+
+    def _build_technical_payload(media_type: str, tmdb_id: int):
+        token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
+        if not token:
+            return None, ("TMDB_READ_ACCESS_TOKEN não configurado.", 500)
+        if media_type not in ("movie", "tv"):
+            return None, ("media_type inválido.", 400)
         url = f"{TMDB_BASE}/{media_type}/{tmdb_id}"
         headers = _tmdb_headers(token)
         append_tech = [
@@ -1634,11 +2129,11 @@ def create_app() -> Flask:
         try:
             r = requests.get(url, params=params, headers=headers, timeout=25)
             if r.status_code == 404:
-                return redirect(url_for("index"))
+                return None, ("Título não encontrado.", 404)
             r.raise_for_status()
             tmdb_data = r.json()
         except requests.RequestException:
-            return "Erro ao carregar dados do TMDB.", 502
+            return None, ("Erro ao carregar dados do TMDB.", 502)
 
         tech = _technical_page_context(tmdb_data, media_type)
         tech["tmdb_id"] = tmdb_id
@@ -1652,16 +2147,31 @@ def create_app() -> Flask:
                     "name": (bc.get("name") or "Coleção").strip(),
                 }
         tech["collection_info"] = collection_info
-        return render_template("technical_sheet.html", **tech)
+        return tech, None
 
-    @app.get("/pessoa/<int:person_id>")
-    def person_page(person_id: int):
+    @app.get("/details/<media_type>/<int:tmdb_id>/ficha-tecnica")
+    def technical_sheet(media_type: str, tmdb_id: int):
+        """Shell React: a ilha consome /api/technical/<mt>/<id>."""
+        if media_type not in ("movie", "tv"):
+            return redirect(url_for("index"))
+        return render_template(
+            "technical_sheet.html",
+            media_type=media_type,
+            tmdb_id=tmdb_id,
+        )
+
+    @app.get("/api/technical/<media_type>/<int:tmdb_id>")
+    def api_technical(media_type: str, tmdb_id: int):
+        payload, err = _build_technical_payload(media_type, tmdb_id)
+        if err:
+            msg, status = err
+            return jsonify({"error": msg}), status
+        return jsonify(payload)
+
+    def _build_person_payload(person_id: int):
         token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
         if not token:
-            return (
-                "Configure a variável de ambiente TMDB_READ_ACCESS_TOKEN.",
-                500,
-            )
+            return None, ("TMDB_READ_ACCESS_TOKEN não configurado.", 500)
         url = f"{TMDB_BASE}/person/{person_id}"
         headers = _tmdb_headers(token)
         params = {
@@ -1671,16 +2181,20 @@ def create_app() -> Flask:
         try:
             r = requests.get(url, params=params, headers=headers, timeout=22)
             if r.status_code == 404:
-                return redirect(url_for("index"))
+                return None, ("Pessoa não encontrada.", 404)
             r.raise_for_status()
             pdata = r.json()
         except requests.RequestException:
-            return "Erro ao carregar dados do TMDB.", 502
+            return None, ("Erro ao carregar dados do TMDB.", 502)
 
         name = pdata.get("name") or "Pessoa"
         profile_path = pdata.get("profile_path")
         biography = (pdata.get("biography") or "").strip()
         known = (pdata.get("known_for_department") or "").strip()
+        birthday = pdata.get("birthday")
+        deathday = pdata.get("deathday")
+        place = (pdata.get("place_of_birth") or "").strip()
+        popularity = pdata.get("popularity")
 
         cc = pdata.get("combined_credits") or {}
         cast_raw = cc.get("cast") or []
@@ -1709,6 +2223,7 @@ def create_app() -> Flask:
                     "title": title,
                     "release_date": rd,
                     "poster_path": entry.get("poster_path"),
+                    "vote_average": entry.get("vote_average"),
                     "role": role or "—",
                 }
             )
@@ -1739,39 +2254,54 @@ def create_app() -> Flask:
         )
         tv_rows = sorted(tv_acc["rows"], key=_sort_key, reverse=True)
 
-        return render_template(
-            "person.html",
-            person_id=person_id,
-            name=name,
-            profile_path=profile_path,
-            biography=biography,
-            known_for_department=known,
-            movie_rows=movie_rows,
-            tv_rows=tv_rows,
-        )
+        return {
+            "person_id": person_id,
+            "name": name,
+            "profile_path": profile_path,
+            "biography": biography,
+            "known_for_department": known,
+            "birthday": birthday,
+            "deathday": deathday,
+            "place_of_birth": place,
+            "popularity": popularity,
+            "movie_rows": movie_rows,
+            "tv_rows": tv_rows,
+            "total_credits": len(movie_rows) + len(tv_rows),
+        }, None
 
-    @app.get("/colecao/<int:collection_id>")
-    def collection_page(collection_id: int):
+    @app.get("/pessoa/<int:person_id>")
+    def person_page(person_id: int):
+        """Shell React: a ilha consome /api/person/<id>."""
+        return render_template("person.html", person_id=person_id)
+
+    @app.get("/api/person/<int:person_id>")
+    def api_person(person_id: int):
+        payload, err = _build_person_payload(person_id)
+        if err:
+            msg, status = err
+            return jsonify({"error": msg}), status
+        return jsonify(payload)
+
+    def _build_collection_payload(collection_id: int):
         token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
         if not token:
-            return (
-                "Configure a variável de ambiente TMDB_READ_ACCESS_TOKEN.",
-                500,
-            )
+            return None, ("TMDB_READ_ACCESS_TOKEN não configurado.", 500)
         url = f"{TMDB_BASE}/collection/{collection_id}"
         headers = _tmdb_headers(token)
         params = {"language": TMDB_LANG}
         try:
             r = requests.get(url, params=params, headers=headers, timeout=20)
             if r.status_code == 404:
-                return redirect(url_for("index"))
+                return None, ("Coleção não encontrada.", 404)
             r.raise_for_status()
             cdata = r.json()
         except requests.RequestException:
-            return "Erro ao carregar dados do TMDB.", 502
+            return None, ("Erro ao carregar dados do TMDB.", 502)
 
         name = cdata.get("name") or "Coleção"
         overview = (cdata.get("overview") or "").strip()
+        backdrop_path = cdata.get("backdrop_path")
+        poster_path = cdata.get("poster_path")
         parts = []
         for p in cdata.get("parts") or []:
             tid = p.get("id")
@@ -1781,21 +2311,38 @@ def create_app() -> Flask:
                 {
                     "tmdb_id": tid,
                     "title": p.get("title") or "",
+                    "overview": (p.get("overview") or "").strip(),
                     "release_date": p.get("release_date") or "",
                     "poster_path": p.get("poster_path"),
+                    "backdrop_path": p.get("backdrop_path"),
+                    "vote_average": p.get("vote_average"),
                 }
             )
         parts.sort(
             key=lambda x: x.get("release_date") or "",
             reverse=True,
         )
-        return render_template(
-            "collection.html",
-            collection_id=collection_id,
-            name=name,
-            overview=overview,
-            parts=parts,
-        )
+        return {
+            "collection_id": collection_id,
+            "name": name,
+            "overview": overview,
+            "backdrop_path": backdrop_path,
+            "poster_path": poster_path,
+            "parts": parts,
+        }, None
+
+    @app.get("/colecao/<int:collection_id>")
+    def collection_page(collection_id: int):
+        """Shell React: a ilha consome /api/collection/<id>."""
+        return render_template("collection.html", collection_id=collection_id)
+
+    @app.get("/api/collection/<int:collection_id>")
+    def api_collection(collection_id: int):
+        payload, err = _build_collection_payload(collection_id)
+        if err:
+            msg, status = err
+            return jsonify({"error": msg}), status
+        return jsonify(payload)
 
     @app.post("/add")
     def add_item():
@@ -2404,55 +2951,16 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
     @app.get("/perfil")
     def profile_gamification_page():
         _abort_gamification_off()
-        from gamification.seasons import current_season, ensure_current_season
-        from gamification.xp_levels import level_and_progress
+        from gamification.seasons import ensure_current_season
 
         cpl = Couple.query.order_by(Couple.id).first()
         if not cpl:
             abort(500, description="Sem casal configurado")
         ensure_current_season(db, GameSeason)
-        st = CoupleXpState.query.filter_by(couple_id=cpl.id).first()
-        total = int(st.total_xp or 0) if st else 0
-        lv, into, need, title = level_and_progress(total)
-        unlocked = (
-            AchievementProgress.query.filter_by(couple_id=cpl.id)
-            .filter(AchievementProgress.unlocked_at.isnot(None))
-            .order_by(AchievementProgress.unlocked_at.desc())
-            .limit(40)
-            .all()
-        )
-        recent_xp = (
-            XpLedgerEntry.query.filter_by(couple_id=cpl.id)
-            .order_by(XpLedgerEntry.created_at.desc())
-            .limit(20)
-            .all()
-        )
-        profiles = Profile.query.filter_by(couple_id=cpl.id).order_by(
-            Profile.slug
-        ).all()
-        season = None
-        season_scores = []
-        if seasons_enabled():
-            season = current_season(db, GameSeason)
-            if season:
-                season_scores = (
-                    SeasonProfileScore.query.filter_by(season_id=season.id)
-                    .order_by(SeasonProfileScore.points.desc())
-                    .all()
-                )
+        # Dados concretos são servidos pelo endpoint /api/profile/state
+        # consumido pela ilha React em templates/perfil.html.
         return render_template(
             "perfil.html",
-            couple=cpl,
-            xp_total=total,
-            xp_level=lv,
-            xp_into=into,
-            xp_need=need,
-            level_title=title,
-            achievements_unlocked=unlocked,
-            xp_recent=recent_xp,
-            profiles=profiles,
-            game_season=season,
-            season_scores=season_scores,
             data_genre_theme="default",
         )
 
@@ -2464,9 +2972,311 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             data_genre_theme="default",
         )
 
+    def _tmdb_movie_brief(tmdb_id: int, media_type: str = "movie"):
+        mt = "movie" if media_type not in ("movie", "tv") else media_type
+        url = f"{TMDB_BASE}/{mt}/{int(tmdb_id)}"
+        params = {"language": TMDB_LANG}
+        data = _tmdb_json_cached(url, params, ttl=86400, timeout=10.0, op=f"{mt}_brief")
+        if not isinstance(data, dict):
+            return None
+        title = data.get("title") if mt == "movie" else data.get("name")
+        rd = data.get("release_date") if mt == "movie" else data.get("first_air_date")
+        return {
+            "tmdb_id": int(tmdb_id),
+            "media_type": mt,
+            "title": title or "",
+            "poster_path": data.get("poster_path") or "",
+            "year": (str(rd)[:4] if rd else None),
+            "vote_average": data.get("vote_average"),
+        }
+
+    def _tmdb_discover_by_keyword(keyword_id: int, limit: int = 12):
+        url = f"{TMDB_BASE}/discover/movie"
+        params = {
+            "language": TMDB_LANG,
+            "sort_by": "popularity.desc",
+            "with_keywords": str(int(keyword_id)),
+            "page": 1,
+        }
+        data = _tmdb_json_cached(
+            url, params, ttl=86400, timeout=12.0, op="discover_keyword"
+        )
+        if not isinstance(data, dict):
+            return []
+        out = []
+        for item in (data.get("results") or [])[:limit]:
+            out.append(
+                {
+                    "tmdb_id": int(item.get("id") or 0),
+                    "media_type": "movie",
+                    "title": item.get("title") or "",
+                    "poster_path": item.get("poster_path") or "",
+                    "year": (str(item.get("release_date") or "")[:4] or None),
+                    "vote_average": item.get("vote_average"),
+                }
+            )
+        return [o for o in out if o["tmdb_id"]]
+
+    @app.get("/api/season/current")
+    def season_current_api():
+        from gamification.feature_flags import gamification_v2_enabled, seasons_enabled
+        from gamification.season_themes import get_theme
+        from gamification.seasons import current_season
+        from gamification.engine import load_achievements_catalog
+
+        if not gamification_v2_enabled() or not seasons_enabled():
+            return jsonify({"enabled": False})
+
+        season = current_season(db, GameSeason)
+        if not season:
+            return jsonify({"enabled": False})
+
+        theme = get_theme(season.theme_key) or {}
+        now = datetime.utcnow()
+        start = season.starts_at
+        end = season.ends_at
+        total_sec = max(1, int((end - start).total_seconds())) if start and end else 1
+        elapsed = max(0, int((now - start).total_seconds())) if start else 0
+        progress_pct = min(100.0, 100.0 * elapsed / total_sec)
+
+        cpl = Couple.query.order_by(Couple.id).first()
+        ach_rows_by_id: dict[str, AchievementProgress] = {}
+        if cpl:
+            for row in AchievementProgress.query.filter_by(couple_id=cpl.id).all():
+                ach_rows_by_id[row.achievement_id] = row
+
+        catalog_by_id = {ach.get("id"): ach for ach in load_achievements_catalog()}
+        seasonal_achievements: list[dict[str, Any]] = []
+        for ach_id in theme.get("seasonal_achievements", []) or []:
+            ach = catalog_by_id.get(ach_id)
+            if not ach:
+                continue
+            rule = ach.get("rule") or {}
+            row = ach_rows_by_id.get(ach_id)
+            progress = int(row.progress) if row and row.progress is not None else 0
+            target = int(rule.get("target") or (row.target if row else 1) or 1)
+            seasonal_achievements.append(
+                {
+                    "id": ach_id,
+                    "title": ach.get("title"),
+                    "description": ach.get("description"),
+                    "icon": ach.get("icon"),
+                    "rarity": ach.get("rarity", "seasonal"),
+                    "xp_reward": int(ach.get("xp_reward") or 0),
+                    "rule_type": rule.get("type"),
+                    "progress": progress,
+                    "target": target,
+                    "unlocked": bool(row and row.unlocked_at),
+                }
+            )
+
+        curated_lists: list[dict[str, Any]] = []
+        for lst in theme.get("curated_lists", []) or []:
+            items: list[dict[str, Any]] = []
+            for it in (lst.get("items") or [])[:12]:
+                brief = _tmdb_movie_brief(
+                    it.get("tmdb_id"), it.get("media_type", "movie")
+                )
+                if brief:
+                    items.append(brief)
+            curated_lists.append(
+                {
+                    "id": lst.get("id"),
+                    "title": lst.get("title"),
+                    "subtitle": lst.get("subtitle"),
+                    "items": items,
+                }
+            )
+
+        keyword_showcases: list[dict[str, Any]] = []
+        for kw in theme.get("tmdb_keywords", []) or []:
+            kid = kw.get("id")
+            if not kid:
+                continue
+            items = _tmdb_discover_by_keyword(int(kid), limit=12)
+            keyword_showcases.append(
+                {
+                    "keyword_id": int(kid),
+                    "title": f"Filmes com {kw.get('name', 'keyword')}",
+                    "subtitle": "Selecionados pelo TMDB.",
+                    "items": items,
+                }
+            )
+
+        return jsonify(
+            {
+                "enabled": True,
+                "label": season.label,
+                "theme_key": season.theme_key,
+                "title": theme.get("title") or season.title,
+                "emoji": theme.get("emoji") or season.trophy_icon,
+                "tagline": theme.get("tagline", ""),
+                "long_intro": theme.get("long_intro", ""),
+                "xp_multiplier": float(theme.get("xp_multiplier", 1.0)),
+                "bonus_genres": theme.get("bonus_genres", []),
+                "starts_at": season.starts_at.isoformat() if season.starts_at else None,
+                "ends_at": season.ends_at.isoformat() if season.ends_at else None,
+                "progress_pct": round(progress_pct, 1),
+                "seasonal_achievements": seasonal_achievements,
+                "curated_lists": curated_lists,
+                "keyword_showcases": keyword_showcases,
+            }
+        )
+
+    @app.get("/api/profile/state")
+    def profile_state_api():
+        from gamification.display_pt import (
+            achievement_icon_pt as _ach_icon,
+            achievement_title_pt as _ach_title,
+            xp_reason_pt as _xp_reason,
+        )
+        from gamification.feature_flags import gamification_v2_enabled, seasons_enabled
+        from gamification.season_themes import get_theme
+        from gamification.seasons import current_season
+        from gamification.xp_levels import level_and_progress
+
+        if not gamification_v2_enabled():
+            return jsonify({"enabled": False})
+
+        cpl = Couple.query.order_by(Couple.id).first()
+        if not cpl:
+            return jsonify({"enabled": False})
+
+        st = CoupleXpState.query.filter_by(couple_id=cpl.id).first()
+        total = int(st.total_xp or 0) if st else 0
+        lv, into, need, title = level_and_progress(total)
+
+        profiles_rows = (
+            Profile.query.filter_by(couple_id=cpl.id).order_by(Profile.slug).all()
+        )
+        profiles_payload: list[dict[str, Any]] = []
+        season = current_season(db, GameSeason) if seasons_enabled() else None
+        season_scores_by_pid: dict[int, int] = {}
+        if season:
+            for sc in SeasonProfileScore.query.filter_by(season_id=season.id).all():
+                season_scores_by_pid[sc.profile_id] = int(sc.points or 0)
+        for p in profiles_rows:
+            profiles_payload.append(
+                {
+                    "slug": p.slug,
+                    "display_name": p.display_name,
+                    "season_points": season_scores_by_pid.get(p.id, 0),
+                }
+            )
+
+        recent_xp = (
+            XpLedgerEntry.query.filter_by(couple_id=cpl.id)
+            .order_by(XpLedgerEntry.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        recent_xp_payload = [
+            {
+                "amount": int(e.amount or 0),
+                "reason": e.reason or "",
+                "reason_pt": _xp_reason(e.reason),
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "ref": e.ref,
+            }
+            for e in recent_xp
+        ]
+
+        unlocked = (
+            AchievementProgress.query.filter_by(couple_id=cpl.id)
+            .filter(AchievementProgress.unlocked_at.isnot(None))
+            .order_by(AchievementProgress.unlocked_at.desc())
+            .limit(20)
+            .all()
+        )
+        unlocks_payload = [
+            {
+                "achievement_id": a.achievement_id,
+                "title": _ach_title(a.achievement_id),
+                "icon": _ach_icon(a.achievement_id),
+                "rarity": "common",
+                "unlocked_at": a.unlocked_at.isoformat() if a.unlocked_at else None,
+            }
+            for a in unlocked
+        ]
+
+        season_payload: dict[str, Any] | None = None
+        if season:
+            theme = get_theme(season.theme_key) or {}
+            now = datetime.utcnow()
+            total_sec = max(1, int((season.ends_at - season.starts_at).total_seconds()))
+            elapsed = max(0, int((now - season.starts_at).total_seconds()))
+            season_payload = {
+                "label": season.label,
+                "theme_key": season.theme_key,
+                "title": theme.get("title") or season.title,
+                "emoji": theme.get("emoji") or season.trophy_icon,
+                "starts_at": season.starts_at.isoformat(),
+                "ends_at": season.ends_at.isoformat(),
+                "progress_pct": round(min(100.0, 100.0 * elapsed / total_sec), 1),
+            }
+
+        return jsonify(
+            {
+                "enabled": True,
+                "couple_label": cpl.label,
+                "total_xp": total,
+                "level": lv,
+                "level_title": title,
+                "level_into": into,
+                "level_need": need,
+                "profiles": profiles_payload,
+                "recent_xp": recent_xp_payload,
+                "recent_unlocks": unlocks_payload,
+                "season": season_payload,
+            }
+        )
+
+    @app.get("/api/achievements/list")
+    def achievements_list_api():
+        from gamification.engine import load_achievements_catalog
+        from gamification.feature_flags import gamification_v2_enabled
+
+        if not gamification_v2_enabled():
+            return jsonify({"enabled": False, "items": []})
+
+        cpl = Couple.query.order_by(Couple.id).first()
+        progress_by_id: dict[str, AchievementProgress] = {}
+        if cpl:
+            for row in AchievementProgress.query.filter_by(couple_id=cpl.id).all():
+                progress_by_id[row.achievement_id] = row
+
+        items: list[dict[str, Any]] = []
+        for ach in load_achievements_catalog():
+            aid = ach.get("id")
+            if not aid:
+                continue
+            rule = ach.get("rule") or {}
+            target = int(rule.get("target") or 1)
+            rarity = (ach.get("rarity") or "common").lower()
+            group = "sazonal" if rarity == "seasonal" else "geral"
+            row = progress_by_id.get(aid)
+            progress = int(row.progress) if row and row.progress is not None else 0
+            unlocked = bool(row and row.unlocked_at)
+            items.append(
+                {
+                    "id": aid,
+                    "title": ach.get("title") or aid,
+                    "description": ach.get("description") or "",
+                    "icon": ach.get("icon") or "🏅",
+                    "rarity": rarity,
+                    "group": group,
+                    "xp_reward": int(ach.get("xp_reward") or 0),
+                    "progress": progress,
+                    "target": target,
+                    "unlocked": unlocked,
+                    "rule_type": rule.get("type"),
+                }
+            )
+
+        return jsonify({"enabled": True, "items": items})
+
     @app.get("/conquistas")
     def conquistas_page():
-        from gamification.engine import load_achievements_catalog
         from gamification.feature_flags import gamification_v2_enabled
 
         if not gamification_v2_enabled():
@@ -2475,31 +3285,10 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 data_genre_theme="default",
             )
 
-        cpl = Couple.query.order_by(Couple.id).first()
-        if not cpl:
-            abort(500, description="Sem casal configurado")
-        catalog = load_achievements_catalog()
-        rows = AchievementProgress.query.filter_by(couple_id=cpl.id).all()
-        by_id = {r.achievement_id: r for r in rows}
-        merged = []
-        for ach in catalog:
-            aid = ach.get("id")
-            if not aid:
-                continue
-            pr = by_id.get(aid)
-            rule = ach.get("rule") if isinstance(ach.get("rule"), dict) else {}
-            rule_tgt = rule.get("target")
-            merged.append(
-                {
-                    "catalog": ach,
-                    "progress": int(pr.progress or 0) if pr else 0,
-                    "target": pr.target if pr and pr.target is not None else rule_tgt,
-                    "unlocked_at": pr.unlocked_at if pr else None,
-                }
-            )
+        # O React consome /api/achievements/list para popular a lista e os
+        # estados de progresso/desbloqueio. Essa rota só serve o shell.
         return render_template(
             "conquistas.html",
-            achievements=merged,
             data_genre_theme="default",
         )
 
@@ -2665,9 +3454,7 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         if not bets_enabled():
             abort(404)
 
-    @app.get("/apostas")
-    def bets_list_page():
-        _bets_abort_if_disabled()
+    def _build_bets_overview_payload():
         from collections import defaultdict
 
         cid = _couple_id()
@@ -2678,6 +3465,119 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             .all()
         )
         profiles = {p.id: p for p in Profile.query.filter_by(couple_id=cid).all()}
+        victories_by_slug = {"a": 0, "b": 0}
+        by_key: dict[tuple[int, str], list] = defaultdict(list)
+        for b in rows:
+            by_key[(b.tmdb_id, b.media_type)].append(b)
+        cards = []
+        token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
+        for (tid, mt), lst in by_key.items():
+            by_prof: dict[int, WatchBet] = {}
+            for b in sorted(lst, key=lambda x: x.created_at or datetime.min, reverse=True):
+                if b.profile_id not in by_prof:
+                    by_prof[b.profile_id] = b
+            uniq = list(by_prof.values())
+            poster_path = None
+            title = (uniq[0].title if uniq else "") or "Sem título"
+            if token:
+                url = f"{TMDB_BASE}/{mt}/{tid}"
+                data = _tmdb_json_cached(
+                    url,
+                    {"language": TMDB_LANG},
+                    ttl=3600,
+                    timeout=14.0,
+                    op=f"bets_card_{mt}_{tid}",
+                )
+                if isinstance(data, dict):
+                    poster_path = data.get("poster_path")
+                    t = (data.get("title") if mt == "movie" else data.get("name")) or ""
+                    if t.strip():
+                        title = t.strip()
+            opens = [x for x in uniq if (x.status or "") == "open"]
+            resolved = [x for x in uniq if (x.status or "") == "resolved"]
+            watched = WatchedItem.query.filter_by(tmdb_id=tid, media_type=mt).first()
+            joint = (
+                float(watched.rating)
+                if watched and watched.rating is not None
+                else None
+            )
+            if joint is None:
+                for x in uniq:
+                    if x.actual_rating is not None:
+                        joint = float(x.actual_rating)
+                        break
+            status_line = "Esperando resolução"
+            if not opens and resolved:
+                winner_pids = set()
+                if joint is not None:
+                    errs = {
+                        int(x.profile_id): abs(float(x.predicted_rating) - float(joint))
+                        for x in resolved
+                    }
+                    if errs:
+                        best = min(errs.values())
+                        winner_pids = {
+                            pid
+                            for pid, err in errs.items()
+                            if abs(err - best) < 1e-6
+                        }
+                if len(winner_pids) == 1:
+                    wpid = next(iter(winner_pids))
+                    pr = profiles.get(wpid)
+                    nm = pr.display_name if pr else "?"
+                    status_line = f"{nm} venceu!"
+                    wslug = (pr.slug if pr else "").lower()
+                    if wslug in victories_by_slug:
+                        victories_by_slug[wslug] += 1
+                elif len(winner_pids) > 1:
+                    status_line = "Empate entre os palpites!"
+                else:
+                    status_line = "Resolvida"
+            cards.append(
+                {
+                    "tmdb_id": tid,
+                    "media_type": mt,
+                    "title": title,
+                    "poster_path": poster_path,
+                    "status_line": status_line,
+                    "has_open": bool(opens),
+                }
+            )
+        cards.sort(key=lambda c: (0 if c["has_open"] else 1, c["title"].lower()))
+        prof_a = next((p for p in profiles.values() if (p.slug or "").lower() == "a"), None)
+        prof_b = next((p for p in profiles.values() if (p.slug or "").lower() == "b"), None)
+        return {
+            "cards": cards,
+            "victories": victories_by_slug,
+            "profile_a": {
+                "label": prof_a.display_name if prof_a else "Perfil A",
+                "slug": "a",
+            },
+            "profile_b": {
+                "label": prof_b.display_name if prof_b else "Perfil B",
+                "slug": "b",
+            },
+        }
+
+    @app.get("/api/bets/overview")
+    def api_bets_overview():
+        _bets_abort_if_disabled()
+        return jsonify(_build_bets_overview_payload())
+
+    @app.get("/apostas")
+    def bets_list_page():
+        _bets_abort_if_disabled()
+        from collections import defaultdict  # noqa: F401 — mantido para compatibilidade
+
+        cid = _couple_id()
+        rows = (
+            WatchBet.query.filter_by(couple_id=cid)
+            .order_by(WatchBet.created_at.desc())
+            .limit(200)
+            .all()
+        )
+        profiles = {p.id: p for p in Profile.query.filter_by(couple_id=cid).all()}
+        victories_by_slug = {"a": 0, "b": 0}
         by_key: dict[tuple[int, str], list] = defaultdict(list)
         for b in rows:
             by_key[(b.tmdb_id, b.media_type)].append(b)
@@ -2708,14 +3608,42 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                         title = t.strip()
             opens = [x for x in uniq if (x.status or "") == "open"]
             resolved = [x for x in uniq if (x.status or "") == "resolved"]
+            watched = WatchedItem.query.filter_by(tmdb_id=tid, media_type=mt).first()
+            joint = (
+                float(watched.rating)
+                if watched and watched.rating is not None
+                else None
+            )
+            if joint is None:
+                for x in uniq:
+                    if x.actual_rating is not None:
+                        joint = float(x.actual_rating)
+                        break
+
             status_line = "Esperando resolução"
             if not opens and resolved:
-                winners = [x for x in resolved if x.won is True]
-                if len(winners) == 1:
-                    pr = profiles.get(winners[0].profile_id)
+                winner_pids = set()
+                if joint is not None:
+                    errs = {
+                        int(x.profile_id): abs(float(x.predicted_rating) - float(joint))
+                        for x in resolved
+                    }
+                    if errs:
+                        best = min(errs.values())
+                        winner_pids = {
+                            pid
+                            for pid, err in errs.items()
+                            if abs(err - best) < 1e-6
+                        }
+                if len(winner_pids) == 1:
+                    wpid = next(iter(winner_pids))
+                    pr = profiles.get(wpid)
                     nm = pr.display_name if pr else "?"
                     status_line = f"{nm} venceu!"
-                elif any(x.won is None for x in resolved):
+                    wslug = (pr.slug if pr else "").lower()
+                    if wslug in victories_by_slug:
+                        victories_by_slug[wslug] += 1
+                elif len(winner_pids) > 1:
                     status_line = "Empate entre os palpites!"
                 else:
                     status_line = "Resolvida"
@@ -2733,8 +3661,147 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         return render_template(
             "apostas.html",
             bet_cards=cards,
+            victories_by_slug=victories_by_slug,
             data_genre_theme="default",
         )
+
+    def _build_bets_detail_payload(media_type: str, tmdb_id: int):
+        cid = _couple_id()
+        rows = (
+            WatchBet.query.filter_by(
+                couple_id=cid, tmdb_id=tmdb_id, media_type=media_type
+            )
+            .order_by(WatchBet.created_at.desc())
+            .all()
+        )
+        if not rows:
+            return None
+        profiles = {
+            p.id: p
+            for p in Profile.query.filter_by(couple_id=cid).all()
+        }
+        by_prof: dict[int, WatchBet] = {}
+        for b in rows:
+            if b.profile_id not in by_prof:
+                by_prof[b.profile_id] = b
+        uniq = list(by_prof.values())
+        token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
+        hero = {
+            "title": rows[0].title,
+            "poster_path": None,
+            "backdrop_path": None,
+            "overview": "",
+            "media_type": media_type,
+            "tmdb_id": tmdb_id,
+        }
+        if token:
+            url = f"{TMDB_BASE}/{media_type}/{tmdb_id}"
+            data = _tmdb_json_cached(
+                url,
+                {"language": TMDB_LANG},
+                ttl=3600,
+                timeout=14.0,
+                op=f"bets_detail_{media_type}_{tmdb_id}",
+            )
+            if isinstance(data, dict):
+                hero["poster_path"] = data.get("poster_path")
+                hero["backdrop_path"] = data.get("backdrop_path")
+                hero["overview"] = (data.get("overview") or "")[:600]
+                nm = (data.get("title") if media_type == "movie" else data.get("name"))
+                if nm:
+                    hero["title"] = str(nm).strip()
+        watched = WatchedItem.query.filter_by(
+            tmdb_id=tmdb_id, media_type=media_type
+        ).first()
+        joint = float(watched.rating) if watched and watched.rating is not None else None
+        if joint is None and uniq:
+            for b in uniq:
+                if b.actual_rating is not None:
+                    joint = float(b.actual_rating)
+                    break
+        resolved = [x for x in uniq if (x.status or "") == "resolved"]
+        winner_pids: set[int] = set()
+        winner_diff = None
+        winner_name = None
+        winner_draw = False
+        if resolved:
+            errs: dict[int, float] = {}
+            if joint is not None:
+                errs = {
+                    int(x.profile_id): abs(float(x.predicted_rating) - float(joint))
+                    for x in resolved
+                }
+            if errs:
+                best = min(errs.values())
+                winner_diff = best
+                winner_pids = {
+                    pid for pid, err in errs.items() if abs(err - best) < 1e-6
+                }
+                if len(winner_pids) == 1:
+                    wpid = next(iter(winner_pids))
+                    pr = profiles.get(wpid)
+                    winner_name = pr.display_name if pr else "?"
+                elif len(winner_pids) > 1:
+                    winner_draw = True
+
+        bet_view_rows = []
+        for b in sorted(
+            uniq,
+            key=lambda x: (
+                ((profiles.get(x.profile_id).slug if profiles.get(x.profile_id) else "z")),
+                -(int(x.id or 0)),
+            ),
+        ):
+            pr = profiles.get(b.profile_id)
+            slug = (pr.slug if pr else "a").lower()
+            diff = None
+            if (b.status or "") == "resolved" and joint is not None:
+                diff = abs(float(b.predicted_rating) - float(joint))
+            outcome = "open"
+            if (b.status or "") == "resolved":
+                if winner_pids:
+                    if len(winner_pids) > 1 and int(b.profile_id) in winner_pids:
+                        outcome = "draw"
+                    elif int(b.profile_id) in winner_pids:
+                        outcome = "win"
+                    else:
+                        outcome = "loss"
+                elif b.won is True:
+                    outcome = "win"
+                elif b.won is False:
+                    outcome = "loss"
+                else:
+                    outcome = "draw"
+            bet_view_rows.append(
+                {
+                    "profile_name": pr.display_name if pr else "Perfil",
+                    "profile_slug": slug if slug in ("a", "b") else "a",
+                    "predicted_rating": float(b.predicted_rating),
+                    "status": b.status or "open",
+                    "actual_rating": b.actual_rating,
+                    "diff": diff,
+                    "exact_hit": (diff is not None and diff < 1e-6),
+                    "outcome": outcome,
+                }
+            )
+        return {
+            "hero": hero,
+            "joint_rating": joint,
+            "winner_name": winner_name,
+            "winner_diff": winner_diff,
+            "winner_draw": winner_draw,
+            "bet_view_rows": bet_view_rows,
+        }
+
+    @app.get("/api/bets/detail/<media_type>/<int:tmdb_id>")
+    def api_bets_detail(media_type: str, tmdb_id: int):
+        _bets_abort_if_disabled()
+        if media_type not in ("movie", "tv"):
+            return jsonify({"error": "media_type inválido"}), 400
+        payload = _build_bets_detail_payload(media_type, tmdb_id)
+        if payload is None:
+            return jsonify({"error": "nenhuma aposta"}), 404
+        return jsonify(payload)
 
     @app.get("/apostas/<media_type>/<int:tmdb_id>")
     def bets_detail_page(media_type: str, tmdb_id: int):
@@ -2802,24 +3869,79 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 pred_by_slug[slug] = float(b.predicted_rating)
         winner_name = None
         winner_diff = None
+        winner_draw = False
         resolved = [x for x in uniq if (x.status or "") == "resolved"]
+        winner_pids = set()
         if resolved:
-            winners = [x for x in resolved if x.won is True]
-            if len(winners) == 1:
-                pr = profiles.get(winners[0].profile_id)
-                winner_name = pr.display_name if pr else "?"
-                if joint is not None:
-                    winner_diff = abs(
-                        float(winners[0].predicted_rating) - float(joint)
-                    )
+            errs = {}
+            if joint is not None:
+                errs = {
+                    int(x.profile_id): abs(float(x.predicted_rating) - float(joint))
+                    for x in resolved
+                }
+            if errs:
+                best = min(errs.values())
+                winner_diff = best
+                winner_pids = {
+                    pid for pid, err in errs.items() if abs(err - best) < 1e-6
+                }
+                if len(winner_pids) == 1:
+                    wpid = next(iter(winner_pids))
+                    pr = profiles.get(wpid)
+                    winner_name = pr.display_name if pr else "?"
+                elif len(winner_pids) > 1:
+                    winner_draw = True
+
+        bet_view_rows = []
+        for b in sorted(
+            uniq,
+            key=lambda x: (
+                ((profiles.get(x.profile_id).slug if profiles.get(x.profile_id) else "z")),
+                -(int(x.id or 0)),
+            ),
+        ):
+            pr = profiles.get(b.profile_id)
+            slug = (pr.slug if pr else "a").lower()
+            diff = None
+            if (b.status or "") == "resolved" and joint is not None:
+                diff = abs(float(b.predicted_rating) - float(joint))
+            outcome = "open"
+            if (b.status or "") == "resolved":
+                if winner_pids:
+                    if len(winner_pids) > 1 and int(b.profile_id) in winner_pids:
+                        outcome = "draw"
+                    elif int(b.profile_id) in winner_pids:
+                        outcome = "win"
+                    else:
+                        outcome = "loss"
+                elif b.won is True:
+                    outcome = "win"
+                elif b.won is False:
+                    outcome = "loss"
+                else:
+                    outcome = "draw"
+            bet_view_rows.append(
+                {
+                    "profile_name": pr.display_name if pr else "Perfil",
+                    "profile_slug": slug if slug in ("a", "b") else "a",
+                    "predicted_rating": float(b.predicted_rating),
+                    "status": b.status or "open",
+                    "actual_rating": b.actual_rating,
+                    "diff": diff,
+                    "exact_hit": (diff is not None and diff < 1e-6),
+                    "outcome": outcome,
+                }
+            )
         return render_template(
             "apostas_detalhe.html",
             hero=hero,
             bets=uniq,
+            bet_view_rows=bet_view_rows,
             joint_rating=joint,
             pred_by_slug=pred_by_slug,
             winner_name=winner_name,
             winner_diff=winner_diff,
+            winner_draw=winner_draw,
             profiles=profiles,
             data_genre_theme="default",
         )
@@ -2977,14 +4099,14 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             data_genre_theme="default",
         )
 
-    @app.get("/mapa")
-    def mapa_paises_page():
+    def _build_map_countries_payload():
         from collections import defaultdict
 
         from gamification.snapshot import snapshot_from_json
         from services.world_map_match import enrich_countries_for_map
 
         counts: dict[str, int] = defaultdict(int)
+        titles_by_iso: dict[str, list[dict]] = defaultdict(list)
         for row in WatchedItem.query.all():
             snap = snapshot_from_json(getattr(row, "tmdb_snapshot_json", None))
             if not snap:
@@ -2993,14 +4115,36 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 iso = (c.get("iso") or "").upper()
                 if iso:
                     counts[iso] += 1
+                    if len(titles_by_iso[iso]) < 6:
+                        titles_by_iso[iso].append(
+                            {
+                                "tmdb_id": row.tmdb_id,
+                                "media_type": row.media_type,
+                                "title": row.title,
+                                "poster_path": row.poster_path,
+                            }
+                        )
         items = sorted(
             ({"iso": k, "count": v} for k, v in counts.items()),
             key=lambda x: (-x["count"], x["iso"]),
         )
         enriched = enrich_countries_for_map(list(items))
+        for c in enriched:
+            c["titles"] = titles_by_iso.get((c.get("iso") or "").upper(), [])
+        return enriched
+
+    @app.get("/api/map/countries")
+    def api_map_countries():
+        resp = jsonify({"countries": _build_map_countries_payload()})
+        resp.headers["Cache-Control"] = "private, max-age=60"
+        return resp
+
+    @app.get("/mapa")
+    def mapa_paises_page():
+        countries = _build_map_countries_payload()
         return render_template(
             "mapa.html",
-            countries=enriched,
+            countries=countries,
             data_genre_theme="default",
         )
 

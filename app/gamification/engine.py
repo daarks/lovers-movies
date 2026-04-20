@@ -51,6 +51,86 @@ def _count_genre_watched(db, WatchedItem, genre_substr: str) -> int:
     )
 
 
+def _count_genre_in_period(
+    db, WatchedItem, genre_substr: str, start: datetime, end: datetime
+) -> int:
+    g = f"%{genre_substr}%"
+    return (
+        WatchedItem.query.filter(WatchedItem.genres.isnot(None))
+        .filter(WatchedItem.genres.like(g))
+        .filter(WatchedItem.added_at >= start)
+        .filter(WatchedItem.added_at <= end)
+        .count()
+    )
+
+
+def _count_keyword_in_period(
+    db, WatchedItem, keyword_id: int, start: datetime, end: datetime
+) -> int:
+    """Conta quantos itens assistidos na janela têm `keyword_id` no snapshot."""
+    total = 0
+    rows = (
+        WatchedItem.query.filter(WatchedItem.added_at >= start)
+        .filter(WatchedItem.added_at <= end)
+        .all()
+    )
+    for row in rows:
+        snap = snapshot_from_json(getattr(row, "tmdb_snapshot_json", None))
+        if not snap:
+            continue
+        ids = snap.get("keyword_ids") or []
+        try:
+            if int(keyword_id) in {int(x) for x in ids}:
+                total += 1
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _count_tmdb_ids_in_period(
+    db,
+    WatchedItem,
+    tmdb_ids: list[int],
+    media_type: str | None,
+    start: datetime,
+    end: datetime,
+) -> int:
+    if not tmdb_ids:
+        return 0
+    id_set = {int(x) for x in tmdb_ids}
+    q = (
+        WatchedItem.query.filter(WatchedItem.added_at >= start)
+        .filter(WatchedItem.added_at <= end)
+        .filter(WatchedItem.tmdb_id.in_(id_set))
+    )
+    if media_type in ("movie", "tv"):
+        q = q.filter(WatchedItem.media_type == media_type)
+    return q.count()
+
+
+def _streak_in_period(db, WatchedItem, start: datetime, end: datetime) -> int:
+    """Maior sequência de dias consecutivos com pelo menos 1 item na janela."""
+    dates = []
+    for row in (
+        WatchedItem.query.filter(WatchedItem.added_at >= start)
+        .filter(WatchedItem.added_at <= end)
+        .all()
+    ):
+        if row.added_at:
+            dates.append(row.added_at.date())
+    if not dates:
+        return 0
+    ordered = sorted(set(dates))
+    best = cur = 1
+    for i in range(1, len(ordered)):
+        if (ordered[i] - ordered[i - 1]).days == 1:
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 1
+    return best
+
+
 def _count_countries(db, WatchedItem) -> set[str]:
     out: set[str] = set()
     for row in WatchedItem.query.all():
@@ -175,6 +255,32 @@ def _eval_rule(
         return int(ctx["genre_counts"].get(g, 0)), tgt
     if t == "consensus_ratings":
         return 1 if ctx.get("consensus") else 0, 1
+    if t == "count_genre_period":
+        # Conta só dentro da janela da temporada ativa (matching por theme_key).
+        theme = rule.get("theme_key")
+        if theme and ctx.get("season_theme_key") != theme:
+            return 0, tgt
+        genre = rule.get("genre", "")
+        return int(ctx.get("season_genre_counts", {}).get(genre, 0)), tgt
+    if t == "count_keyword_period":
+        theme = rule.get("theme_key")
+        if theme and ctx.get("season_theme_key") != theme:
+            return 0, tgt
+        kw = rule.get("keyword_id")
+        if kw is None:
+            return 0, tgt
+        return int(ctx.get("season_keyword_counts", {}).get(int(kw), 0)), tgt
+    if t == "count_tmdb_ids_period":
+        theme = rule.get("theme_key")
+        if theme and ctx.get("season_theme_key") != theme:
+            return 0, tgt
+        list_id = rule.get("list_id")
+        return int(ctx.get("season_list_counts", {}).get(list_id, 0)), tgt
+    if t == "streak_days_period":
+        theme = rule.get("theme_key")
+        if theme and ctx.get("season_theme_key") != theme:
+            return 0, tgt
+        return int(ctx.get("season_streak", 0)), tgt
     return 0, tgt
 
 
@@ -241,6 +347,26 @@ def on_watched_saved(
         f"watched:{watched_item.id}",
     )
     out["xp_gained"] = xp
+
+    season_ctx = _build_season_context(db, WatchedItem, watched_item, base_xp=xp)
+    if season_ctx.get("bonus_xp") > 0:
+        bonus_amount = int(season_ctx["bonus_xp"])
+        _grant_xp(
+            db,
+            XpLedgerEntry,
+            CoupleXpState,
+            couple_id,
+            bonus_amount,
+            "watch_bonus_season",
+            f"watched:{watched_item.id}:{season_ctx.get('theme_key') or 'season'}",
+        )
+        out["xp_gained"] += bonus_amount
+        out["season_bonus"] = {
+            "amount": bonus_amount,
+            "theme_key": season_ctx.get("theme_key"),
+            "matched_genres": season_ctx.get("matched_genres", []),
+        }
+
     st = CoupleXpState.query.filter_by(couple_id=couple_id).first()
     if st:
         lv, into, need, title = level_and_progress(st.total_xp)
@@ -267,6 +393,11 @@ def on_watched_saved(
         "streak": streak,
         "swipe_matches": _swipe_matches_count(db, SwipeItem, couple_id),
         "consensus": consensus,
+        "season_theme_key": season_ctx.get("theme_key"),
+        "season_genre_counts": season_ctx.get("genre_counts", {}),
+        "season_keyword_counts": season_ctx.get("keyword_counts", {}),
+        "season_list_counts": season_ctx.get("list_counts", {}),
+        "season_streak": season_ctx.get("streak", 0),
     }
 
     for ach in _load_catalog():
@@ -310,6 +441,119 @@ def on_watched_saved(
         _season_add_points(db, couple_id, xp // 2)
 
     return out
+
+
+def _build_season_context(db, WatchedItem, new_item, base_xp: int = 0) -> dict[str, Any]:
+    """Calcula bônus de XP da temporada ativa e contadores para conquistas sazonais."""
+    from gamification.season_themes import (
+        bonus_genre_ids,
+        bonus_genre_names,
+        curated_tmdb_ids,
+        get_theme,
+        keyword_ids,
+        xp_multiplier,
+    )
+    from gamification.seasons import current_season
+    from models import GameSeason
+
+    empty: dict[str, Any] = {
+        "theme_key": None,
+        "bonus_xp": 0,
+        "matched_genres": [],
+        "genre_counts": {},
+        "keyword_counts": {},
+        "list_counts": {},
+        "streak": 0,
+    }
+
+    if not seasons_enabled():
+        return empty
+
+    season = current_season(db, GameSeason)
+    if not season:
+        return empty
+
+    theme_key = season.theme_key
+    theme = get_theme(theme_key)
+    if not theme:
+        return empty
+
+    start = season.starts_at
+    end = season.ends_at
+    if not start or not end:
+        return empty
+
+    bonus_ids = bonus_genre_ids(theme_key)
+    bonus_names = bonus_genre_names(theme_key)
+    snap = snapshot_from_json(getattr(new_item, "tmdb_snapshot_json", None)) or {}
+    item_genre_ids = {int(g) for g in (snap.get("genre_ids") or []) if g is not None}
+    item_genre_names = {
+        str(g).strip().lower() for g in (snap.get("genre_names") or []) if g
+    }
+    raw_genres_csv = (getattr(new_item, "genres", "") or "").lower()
+    csv_tokens = {tok.strip() for tok in raw_genres_csv.split(",") if tok.strip()}
+
+    matched_genres: list[str] = []
+    for g in theme.get("bonus_genres", []):
+        gid = int(g.get("tmdb_id", 0))
+        gname = str(g.get("name", "")).strip()
+        lname = gname.lower()
+        if gid in item_genre_ids or lname in item_genre_names or any(
+            lname in tok or tok in lname for tok in csv_tokens
+        ):
+            matched_genres.append(gname)
+
+    bonus_xp = 0
+    if matched_genres:
+        mult = xp_multiplier(theme_key)
+        if base_xp and base_xp > 0:
+            bonus_xp = max(1, int(round((mult - 1.0) * base_xp)))
+        else:
+            avg = float(getattr(new_item, "rating", 0) or 0)
+            bonus_xp = max(1, int(round((mult - 1.0) * (10 + int(avg * 2)))))
+
+    # Contadores na janela da temporada (usados nas conquistas sazonais)
+    genre_counts: dict[str, int] = {}
+    for g in theme.get("bonus_genres", []):
+        nm = str(g.get("name") or "")
+        if nm:
+            genre_counts[nm] = _count_genre_in_period(
+                db, WatchedItem, nm, start, end
+            )
+
+    keyword_counts: dict[int, int] = {}
+    for kid in keyword_ids(theme_key):
+        keyword_counts[int(kid)] = _count_keyword_in_period(
+            db, WatchedItem, int(kid), start, end
+        )
+
+    list_counts: dict[str, int] = {}
+    for lst in theme.get("curated_lists", []):
+        list_id = lst.get("id")
+        if not list_id:
+            continue
+        ids = [int(i["tmdb_id"]) for i in lst.get("items", []) if i.get("tmdb_id")]
+        list_counts[list_id] = _count_tmdb_ids_in_period(
+            db, WatchedItem, ids, None, start, end
+        )
+
+    # Backwards: também indexar por list_id expressivo
+    for list_id in list(list_counts.keys()):
+        list_counts.setdefault(list_id, 0)
+
+    streak = _streak_in_period(db, WatchedItem, start, end)
+
+    _ = bonus_ids, bonus_names  # future use
+
+    return {
+        "theme_key": theme_key,
+        "bonus_xp": int(bonus_xp or 0),
+        "matched_genres": matched_genres,
+        "genre_counts": genre_counts,
+        "keyword_counts": keyword_counts,
+        "list_counts": list_counts,
+        "streak": streak,
+    }
 
 
 def _season_add_points(db, couple_id: int, points: int) -> None:

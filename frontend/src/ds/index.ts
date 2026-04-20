@@ -1,0 +1,21 @@
+/* Exporta os primitivos do Design System premium. */
+export { SurfacePanel } from "./SurfacePanel";
+export { GradientTitle } from "./GradientTitle";
+export { ShinyText } from "./ShinyText";
+export { TypewriterTitle } from "./TypewriterTitle";
+export { NumberTicker } from "./NumberTicker";
+export { SplitText } from "./SplitText";
+export { MagneticButton } from "./MagneticButton";
+export { SpotlightCard } from "./SpotlightCard";
+export { TiltCard } from "./TiltCard";
+export { MediaPoster } from "./MediaPoster";
+export { Skeleton } from "./Skeleton";
+export { Marquee } from "./Marquee";
+export { ScrollReveal } from "./ScrollReveal";
+export { Chip } from "./Chip";
+export { SegmentedToggle } from "./SegmentedToggle";
+export { Sheet } from "./Sheet";
+export { ToastProvider, useToast } from "./Toast";
+export { EmptyState } from "./EmptyState";
+export { PageHero } from "./PageHero";
+export { cx } from "./cx";

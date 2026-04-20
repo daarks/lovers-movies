@@ -1,34 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Apostas{% endblock %}
-{% block body_class %}page-apostas{% endblock %}
-{% block head_extra %}
-  <meta name="view-transition" content="same-origin">
-{% endblock %}
+{% block body_class %}page-apostas page-react{% endblock %}
 {% block body %}
 <main class="apostas-main">
-  <h1 class="section-title">Apostas</h1>
-  <p class="text-muted">Palpites antes de assistir. Ao registar a nota do casal na lista, o app resolve quem chegou mais perto.</p>
-
-  {% if not bet_cards %}
-  <p class="text-muted">Ainda não há apostas registadas. Use <strong>Apostar!</strong> na página de um título.</p>
-  {% else %}
-  <ul class="apostas-grid" role="list">
-    {% for c in bet_cards %}
-    <li>
-      <a href="{{ url_for('bets_detail_page', media_type=c.media_type, tmdb_id=c.tmdb_id) }}" class="apostas-card filter-modal-panel--glass nav-preserve-scroll">
-        <div class="apostas-card-poster-wrap">
-          {% if c.poster_path %}
-          <img src="https://image.tmdb.org/t/p/w185{{ c.poster_path }}" alt="" class="apostas-card-poster" loading="lazy" width="185" height="278">
-          {% else %}
-          <div class="apostas-card-poster-ph" aria-hidden="true">🎬</div>
-          {% endif %}
-        </div>
-        <h2 class="apostas-card-title">{{ c.title }}</h2>
-        <p class="apostas-card-status{% if c.has_open %} apostas-card-status--open{% endif %}">{{ c.status_line }}</p>
-      </a>
-    </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
+  <div id="bets-root" class="bets-shell" aria-busy="true">
+    <noscript>
+      <section class="bets-shell-fallback">
+        <h1>Apostas</h1>
+        <p>Essa tela precisa de JavaScript para carregar o painel premium.</p>
+      </section>
+    </noscript>
+    <section class="bets-shell-fallback" aria-hidden="true">
+      <p class="text-muted">Carregando apostas…</p>
+    </section>
+  </div>
 </main>
+{% endblock %}
+{% block scripts_extra %}
+{{ vite_entry_tags('bets') }}
 {% endblock %}

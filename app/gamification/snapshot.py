@@ -39,6 +39,34 @@ def build_tmdb_snapshot(tmdb_data: dict[str, Any], media_type: str) -> dict[str,
         if ert:
             runtime = int(sum(ert) / len(ert))
 
+    keywords_payload = tmdb_data.get("keywords") or {}
+    raw_keywords = (
+        keywords_payload.get("keywords")
+        if isinstance(keywords_payload, dict)
+        else None
+    )
+    if raw_keywords is None and isinstance(keywords_payload, dict):
+        raw_keywords = keywords_payload.get("results") or []
+    if not isinstance(raw_keywords, list):
+        raw_keywords = []
+    keyword_ids: list[int] = []
+    keyword_names: list[str] = []
+    seen_k: set[int] = set()
+    for kw in raw_keywords:
+        if not isinstance(kw, dict):
+            continue
+        try:
+            kid = int(kw.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if kid in seen_k:
+            continue
+        seen_k.add(kid)
+        keyword_ids.append(kid)
+        nm = (kw.get("name") or "").strip()
+        if nm:
+            keyword_names.append(nm)
+
     return {
         "media_type": media_type,
         "genre_ids": genre_ids,
@@ -53,6 +81,8 @@ def build_tmdb_snapshot(tmdb_data: dict[str, Any], media_type: str) -> dict[str,
             if media_type == "movie"
             else tmdb_data.get("first_air_date")
         ),
+        "keyword_ids": keyword_ids[:64],
+        "keyword_names": keyword_names[:64],
     }
 
 

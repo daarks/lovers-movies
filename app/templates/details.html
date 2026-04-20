@@ -2,234 +2,128 @@
 {% from '_macros_stars.html' import half_star_row %}
 {% block title %}{{ title }}{% endblock %}
 {% set joint_rating = saved.rating|float if saved and saved.rating is not none else 0 %}
-{% block body_class %}page-details{% endblock %}
+{% block body_class %}page-details page-react{% endblock %}
 {% block header_logo_class %}nav-preserve-scroll{% endblock %}
 {% block body %}
 
-<button type="button" class="details-back" id="btn-back">&#8592; Voltar</button>
-{% if collection_info %}
-<a href="{{ url_for('collection_page', collection_id=collection_info.id) }}" class="details-collection-btn nav-preserve-scroll" title="Ver coleção: {{ collection_info.name }}" aria-label="Ver coleção no TMDB">&#128193;</a>
-{% endif %}
+<div
+  id="details-root"
+  class="details-shell"
+  data-media-type="{{ media_type }}"
+  data-tmdb-id="{{ tmdb_id }}"
+  aria-busy="true"
+>
+  <noscript>
+    <section class="details-shell-fallback">
+      <h1>{{ title }}</h1>
+      <p>Esta página precisa de JavaScript ligado para exibir o modo premium.</p>
+    </section>
+  </noscript>
+  <section class="details-shell-fallback" aria-hidden="true">
+    <p class="text-muted">Carregando {{ title }}…</p>
+  </section>
+</div>
 
-<section class="details-hero">
-  {% if backdrop_path %}
-  <img
-    class="details-backdrop"
-    src="https://image.tmdb.org/t/p/w780{{ backdrop_path }}"
-    alt=""
-    loading="eager"
-  >
-  {% endif %}
-  <div class="details-hero-gradient" aria-hidden="true"></div>
-  <div class="details-hero-inner">
-    <div class="details-poster">
-      {% if poster_path %}
-      <img src="https://image.tmdb.org/t/p/w342{{ poster_path }}" alt="" loading="eager">
-      {% else %}
-      <div class="details-poster-placeholder" aria-hidden="true">🎬</div>
-      {% endif %}
-    </div>
-    <div class="details-head">
-      <h1 class="details-title">{{ title }}</h1>
-      {% if original_title and original_title != title %}
-      <p class="details-original">{{ original_title }}</p>
-      {% endif %}
-      <div class="details-meta-row">
-        {% if release_date %}
-        <span>{{ release_date[:4] if release_date|length >= 4 else release_date }}</span>
-        {% endif %}
-        <span class="badge">{% if media_type == 'movie' %}Filme{% else %}Série{% endif %}</span>
-        {% if vote_average is not none %}
-        <span class="tmdb-score" title="Nota TMDB">&#11088; {{ '%.1f'|format(vote_average) }}</span>
-        {% endif %}
-        {% if certification_br %}
-        <span class="badge {{ certification_br|cert_br_class }}" title="Classificação indicativa no Brasil (TMDB)">{{ certification_br }}</span>
-        {% endif %}
-      </div>
-      {% if tagline %}
-      <p class="details-tagline">“{{ tagline }}”</p>
-      {% endif %}
-      <div class="details-watch-wrap">
-        {% if watch_later %}
-        <form method="post" action="{{ url_for('watch_later_remove', item_id=watch_later.id) }}" class="form-watch-later-inline">
-          <input type="hidden" name="return_to" value="details">
-          <button type="submit" class="btn-watch-later btn-watch-later--saved" title="Remover da fila Assistir depois">Retirar da fila</button>
-        </form>
-        {% else %}
-        <form method="post" action="{{ url_for('watch_later_add') }}" class="form-watch-later-inline">
-          <input type="hidden" name="tmdb_id" value="{{ tmdb_id }}">
-          <input type="hidden" name="media_type" value="{{ media_type }}">
-          <input type="hidden" name="title" value="{{ title }}">
-          <input type="hidden" name="original_title" value="{{ original_title }}">
-          <input type="hidden" name="overview" value="{{ overview }}">
-          <input type="hidden" name="poster_path" value="{{ poster_path or '' }}">
-          <input type="hidden" name="backdrop_path" value="{{ backdrop_path or '' }}">
-          <input type="hidden" name="release_date" value="{{ release_date }}">
-          <input type="hidden" name="genres" value="{{ genres_csv }}">
-          <input type="hidden" name="vote_average" value="{{ vote_average if vote_average is not none else '' }}">
-          <button type="submit" class="btn-watch-later">Assistir depois</button>
-        </form>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</section>
-
-<div class="details-content">
-  {% if overview %}
-  <div class="synopsis-wrap" id="synopsis-wrap">
-    <p class="synopsis is-clamped" id="synopsis-text">{{ overview }}</p>
-    <button type="button" class="synopsis-toggle" id="synopsis-toggle" hidden>Ver mais</button>
-  </div>
-  {% endif %}
-
-  {% if credit_directors or credit_writers %}
-  <div class="details-credits-mini" aria-label="Créditos principais">
-    {% if credit_directors %}
-    <p class="details-credit-line"><span class="details-credit-label">Dirigido por:</span> {{ credit_directors }}</p>
-    {% endif %}
-    {% if credit_writers %}
-    <p class="details-credit-line"><span class="details-credit-label">Escrito por:</span> {{ credit_writers }}</p>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  <div class="chips" aria-label="Informações">
-    {% for g in genres_list %}
-    <span class="chip">{{ g }}</span>
-    {% endfor %}
-    {% if release_date %}
-    <span class="chip">Lançamento: {{ release_date|date_br }}</span>
-    {% endif %}
-    {% if duration_label %}
-    <span class="chip">{{ duration_label }}</span>
-    {% endif %}
-  </div>
-
-  <p class="technical-page-link-wrap">
-    <a href="{{ url_for('technical_sheet', media_type=media_type, tmdb_id=tmdb_id) }}" class="btn-technical-page nav-preserve-scroll">
-      Ver ficha técnica completa
-    </a>
-  </p>
-
+{# ====== Bloco de avaliação preservado (Jinja) ======
+   O DetailsApp React rola a página até esta âncora (#avaliacao) quando o usuário
+   clica em "Avaliar / Editar avaliação". Os formulários existentes continuam
+   funcionando exatamente como antes. #}
+<div class="details-content details-review-block">
   <div class="details-review-card filter-modal-panel--glass" id="avaliacao">
     <h2 class="section-title details-review-card__title">Nossa avaliação</h2>
 
-  <form
-    id="form-add"
-    class="form-add"
-    action="{{ url_for('add_item') }}"
-    method="post"
-    data-needs-rating="true"
-    data-media-type="{{ media_type }}"
-  >
-    <input type="hidden" name="tmdb_id" value="{{ tmdb_id }}">
-    <input type="hidden" name="media_type" value="{{ media_type }}">
-    <input type="hidden" name="title" value="{{ title }}">
-    <input type="hidden" name="original_title" value="{{ original_title }}">
-    <input type="hidden" name="overview" value="{{ overview }}">
-    <input type="hidden" name="poster_path" value="{{ poster_path or '' }}">
-    <input type="hidden" name="backdrop_path" value="{{ backdrop_path or '' }}">
-    <input type="hidden" name="release_date" value="{{ release_date }}">
-    <input type="hidden" name="genres" value="{{ genres_csv }}">
-    <input type="hidden" name="vote_average" value="{{ vote_average if vote_average is not none else '' }}">
-    <textarea name="tmdb_snapshot_json" id="tmdb-snapshot-json" class="visually-hidden" aria-hidden="true" tabindex="-1">{{ tmdb_snapshot_json|e }}</textarea>
+    <form
+      id="form-add"
+      class="form-add"
+      action="{{ url_for('add_item') }}"
+      method="post"
+      data-needs-rating="true"
+      data-media-type="{{ media_type }}"
+    >
+      <input type="hidden" name="tmdb_id" value="{{ tmdb_id }}">
+      <input type="hidden" name="media_type" value="{{ media_type }}">
+      <input type="hidden" name="title" value="{{ title }}">
+      <input type="hidden" name="original_title" value="{{ original_title }}">
+      <input type="hidden" name="overview" value="{{ overview }}">
+      <input type="hidden" name="poster_path" value="{{ poster_path or '' }}">
+      <input type="hidden" name="backdrop_path" value="{{ backdrop_path or '' }}">
+      <input type="hidden" name="release_date" value="{{ release_date }}">
+      <input type="hidden" name="genres" value="{{ genres_csv }}">
+      <input type="hidden" name="vote_average" value="{{ vote_average if vote_average is not none else '' }}">
+      <textarea name="tmdb_snapshot_json" id="tmdb-snapshot-json" class="visually-hidden" aria-hidden="true" tabindex="-1">{{ tmdb_snapshot_json|e }}</textarea>
 
-    {% if media_type == 'tv' %}
-    <input type="hidden" name="season_data_json" id="season-data-json" value="">
-    <script type="application/json" id="tv-seasons-initial">{{ tv_season_rows|tojson }}</script>
-    <p class="tv-seasons-hint">Selecione a temporada. A nota vai de <strong>0,5 a 10</strong> em passos de meio ponto (estrelas). Avalie só as temporadas que assistiram. A <strong>média da série</strong> na lista é calculada automaticamente.</p>
-    <p class="tv-season-mean-hint" id="tv-season-mean-hint" aria-live="polite"></p>
-    <div class="tv-season-toolbar">
-      <label for="tv-season-select" class="tv-season-select-label">Temporada</label>
-      <select id="tv-season-select" class="tv-season-select" aria-label="Escolher temporada">
-        {% for row in tv_season_rows %}
-        <option value="{{ row.num }}">Temporada {{ row.num }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="tv-season-active-panel" id="tv-season-active-panel">
-      <p class="tv-season-panel-title" id="tv-season-panel-title">Avaliação da temporada selecionada</p>
-      {{ half_star_row('tv-season-star-rating', 0, '') }}
-      <input type="hidden" id="tv-season-rating-value" value="">
-      <label for="tv-season-review" class="season-review-label">Comentário (esta temporada)</label>
-      <textarea id="tv-season-review" class="review-textarea" rows="3" placeholder="Opcional"></textarea>
-    </div>
-    {% else %}
-    <p class="details-joint-rating-hint text-muted">Nota do casal (0,5 a 10). Apostas individuais ficam em <strong>Apostar!</strong></p>
-    {{ half_star_row('star-rating', joint_rating if joint_rating >= 0.5 else 0, '') }}
-    <input type="hidden" name="rating" id="input-rating" value="{% if joint_rating >= 0.5 %}{{ joint_rating }}{% endif %}" class="hidden-input-rating" required>
-    <label for="review" class="visually-hidden">Resenha</label>
-    <textarea class="review-textarea" id="review" name="review" placeholder="Escreva uma resenha... (opcional)">{{ saved.review or '' }}</textarea>
-    {% endif %}
+      {% if media_type == 'tv' %}
+      <input type="hidden" name="season_data_json" id="season-data-json" value="">
+      <script type="application/json" id="tv-seasons-initial">{{ tv_season_rows|tojson }}</script>
+      <p class="tv-seasons-hint">Selecione a temporada. A nota vai de <strong>0,5 a 10</strong> em passos de meio ponto (estrelas). Avalie só as temporadas que assistiram.</p>
+      <div class="tv-season-toolbar">
+        <label for="tv-season-select" class="tv-season-select-label">Temporada</label>
+        <select id="tv-season-select" class="tv-season-select" aria-label="Escolher temporada">
+          {% for row in tv_season_rows %}
+          <option value="{{ row.num }}">Temporada {{ row.num }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="tv-season-active-panel" id="tv-season-active-panel">
+        <p class="tv-season-panel-title" id="tv-season-panel-title">Avaliação da temporada selecionada</p>
+        {{ half_star_row('tv-season-star-rating', 0, '') }}
+        <input type="hidden" id="tv-season-rating-value" value="">
+        <label for="tv-season-review" class="season-review-label">Comentário (esta temporada)</label>
+        <textarea id="tv-season-review" class="review-textarea" rows="3" placeholder="Opcional"></textarea>
+      </div>
+      {% else %}
+      {{ half_star_row('star-rating', joint_rating if joint_rating >= 0.5 else 0, '') }}
+      <input type="hidden" name="rating" id="input-rating" value="{% if joint_rating >= 0.5 %}{{ joint_rating }}{% endif %}" class="hidden-input-rating" required>
+      <label for="review" class="visually-hidden">Resenha</label>
+      <textarea class="review-textarea" id="review" name="review" placeholder="Escreva uma resenha... (opcional)">{{ saved.review or '' }}</textarea>
+      {% endif %}
+
+      {% if gamification_v2_nav %}
+      <button type="button" class="btn-secondary details-bet-open" id="btn-open-bet-dialog">Apostar!</button>
+      {% endif %}
+
+      {% if saved %}
+      <button type="submit" class="btn-primary">Atualizar avaliação</button>
+      {% else %}
+      <button type="submit" class="btn-primary">Adicionar à nossa lista</button>
+      {% endif %}
+    </form>
 
     {% if gamification_v2_nav %}
-    <button type="button" class="btn-secondary details-bet-open" id="btn-open-bet-dialog">Apostar!</button>
+    <dialog class="details-bet-dialog" id="details-bet-dialog" aria-labelledby="details-bet-title">
+      <div class="details-bet-dialog-inner filter-modal-panel--glass">
+        <h2 id="details-bet-title" class="section-title">Apostas antes de assistir</h2>
+        <p class="text-muted">Cada um chuta a nota final (0,5 a 10). Ao salvar a nota do casal na lista, o app diz quem chegou mais perto.</p>
+        <p class="details-bet-film-title"><strong>{{ title }}</strong> · {% if media_type == 'movie' %}Filme{% else %}Série{% endif %}</p>
+        <div class="details-bet-rows">
+          <div class="details-bet-row">
+            <span class="details-bet-label">{{ profile_label_a }}</span>
+            {{ half_star_row('star-bet-a', 0, 'star-rating-input--sm') }}
+            <input type="hidden" id="bet-val-a" value="">
+            <button type="button" class="btn-ghost btn-sm" id="btn-bet-save-a">Salvar aposta</button>
+          </div>
+          <div class="details-bet-row">
+            <span class="details-bet-label">{{ profile_label_b }}</span>
+            {{ half_star_row('star-bet-b', 0, 'star-rating-input--sm') }}
+            <input type="hidden" id="bet-val-b" value="">
+            <button type="button" class="btn-ghost btn-sm" id="btn-bet-save-b">Salvar aposta</button>
+          </div>
+        </div>
+        <button type="button" class="filter-modal-close details-bet-close" id="details-bet-close" aria-label="Fechar">×</button>
+      </div>
+    </dialog>
     {% endif %}
 
     {% if saved %}
-    <button type="submit" class="btn-primary">Atualizar avaliação</button>
-    {% else %}
-    <button type="submit" class="btn-primary">Adicionar à nossa lista</button>
+    <form action="{{ url_for('delete_item', item_id=saved.id) }}" method="post" onsubmit="return confirm('Remover este item da lista?');">
+      <button type="submit" class="btn-danger">Remover da lista</button>
+    </form>
     {% endif %}
-  </form>
-
-  {% if gamification_v2_nav %}
-  <dialog class="details-bet-dialog" id="details-bet-dialog" aria-labelledby="details-bet-title">
-    <div class="details-bet-dialog-inner filter-modal-panel--glass">
-      <h2 id="details-bet-title" class="section-title">Apostas antes de assistir</h2>
-      <p class="text-muted">Cada um chuta a nota final (0,5 a 10). Ao salvar a nota do casal na lista, o app diz quem chegou mais perto.</p>
-      <p class="details-bet-film-title"><strong>{{ title }}</strong> · {% if media_type == 'movie' %}Filme{% else %}Série{% endif %}</p>
-      <div class="details-bet-rows">
-        <div class="details-bet-row">
-          <span class="details-bet-label">{{ profile_label_a }}</span>
-          {{ half_star_row('star-bet-a', 0, 'star-rating-input--sm') }}
-          <input type="hidden" id="bet-val-a" value="">
-          <button type="button" class="btn-ghost btn-sm" id="btn-bet-save-a">Salvar aposta</button>
-        </div>
-        <div class="details-bet-row">
-          <span class="details-bet-label">{{ profile_label_b }}</span>
-          {{ half_star_row('star-bet-b', 0, 'star-rating-input--sm') }}
-          <input type="hidden" id="bet-val-b" value="">
-          <button type="button" class="btn-ghost btn-sm" id="btn-bet-save-b">Salvar aposta</button>
-        </div>
-      </div>
-      <button type="button" class="filter-modal-close details-bet-close" id="details-bet-close" aria-label="Fechar">×</button>
-    </div>
-  </dialog>
-  {% endif %}
-
-  {% if saved %}
-  <form action="{{ url_for('delete_item', item_id=saved.id) }}" method="post" onsubmit="return confirm('Remover este item da lista?');">
-    <button type="submit" class="btn-danger">Remover da lista</button>
-  </form>
-  {% endif %}
   </div>
-
-  {% if recommendation_items %}
-  <section class="details-rec-section" aria-labelledby="details-rec-title">
-    <h2 class="section-title" id="details-rec-title">Parecidos com isto</h2>
-    <div class="home-media-slider sugg-gemini-slider details-rec-slider" role="region">
-      <div class="home-media-slider-track sugg-gemini-slider-track">
-        {% for s in recommendation_items %}
-        <a class="home-media-card nav-preserve-scroll" href="{{ url_for('details', media_type=s.media_type, tmdb_id=s.id) }}">
-          <div class="home-media-card-poster">
-            {% if s.poster_path %}
-            <img src="https://image.tmdb.org/t/p/w185{{ s.poster_path }}" alt="" loading="lazy">
-            {% else %}
-            <span class="home-media-card-ph" aria-hidden="true">🎬</span>
-            {% endif %}
-          </div>
-          <span class="home-media-card-title">{{ s.title }}</span>
-        </a>
-        {% endfor %}
-      </div>
-    </div>
-  </section>
-  {% endif %}
 </div>
 {% endblock %}
 {% block scripts_extra %}
+{{ vite_entry_tags('details') }}
 {% if gamification_v2_nav %}
 <script>
 document.addEventListener("DOMContentLoaded", function () {

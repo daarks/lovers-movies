@@ -455,3 +455,95 @@ achievements:
     icon: "🎄"
     xp_reward: 140
     rule: { type: seasonal_month_genre, month: 12, genre_substr: Comédia, target: 6 }
+
+  # ===== Temporada do Terror (autumn_thriller) =====
+  - id: season_terror_king_5
+    title: O Clube do Stephen King
+    description: Assistam 5 adaptações do Stephen King durante a Temporada do Terror.
+    rarity: seasonal
+    icon: "📖"
+    xp_reward: 180
+    rule: { type: count_keyword_period, theme_key: autumn_thriller, keyword_id: 9715, target: 5 }
+  - id: season_terror_classics_5
+    title: Mestre dos clássicos
+    description: Marquem 5 títulos da lista "Clássicos do terror" na temporada.
+    rarity: seasonal
+    icon: "🪓"
+    xp_reward: 160
+    rule: { type: count_tmdb_ids_period, theme_key: autumn_thriller, list_id: horror_classics, target: 5 }
+  - id: season_terror_streak_3
+    title: Noites seguidas
+    description: 3 dias consecutivos assistindo algo na temporada do terror.
+    rarity: seasonal
+    icon: "🕯️"
+    xp_reward: 120
+    rule: { type: streak_days_period, theme_key: autumn_thriller, target: 3 }
+
+  # ===== Temporada de Premiações (winter_awards) =====
+  - id: season_awards_drama_5
+    title: Sala de projeção
+    description: 5 dramas durante a Temporada de Premiações.
+    rarity: seasonal
+    icon: "🎬"
+    xp_reward: 150
+    rule: { type: count_genre_period, theme_key: winter_awards, genre: Drama, target: 5 }
+  - id: season_awards_oscar_list_5
+    title: Tapete vermelho
+    description: 5 filmes da curadoria "Vencedores de Melhor Filme".
+    rarity: seasonal
+    icon: "🏆"
+    xp_reward: 200
+    rule: { type: count_tmdb_ids_period, theme_key: winter_awards, list_id: oscar_best_picture, target: 5 }
+  - id: season_awards_biography_3
+    title: Retratos em foco
+    description: 3 títulos com keyword "Biografia" na temporada.
+    rarity: seasonal
+    icon: "🖊️"
+    xp_reward: 110
+    rule: { type: count_keyword_period, theme_key: winter_awards, keyword_id: 9849, target: 3 }
+
+  # ===== Blocos de Verão (summer_blockbusters) =====
+  - id: season_summer_action_5
+    title: Pipoca estourou
+    description: 5 filmes de ação no verão.
+    rarity: seasonal
+    icon: "🍿"
+    xp_reward: 150
+    rule: { type: count_genre_period, theme_key: summer_blockbusters, genre: Ação, target: 5 }
+  - id: season_summer_iconic_5
+    title: Blockbusters icônicos
+    description: 5 títulos da curadoria "Blockbusters icônicos".
+    rarity: seasonal
+    icon: "🚀"
+    xp_reward: 200
+    rule: { type: count_tmdb_ids_period, theme_key: summer_blockbusters, list_id: summer_iconic, target: 5 }
+  - id: season_summer_superhero_3
+    title: Uniforme vestido
+    description: 3 títulos com keyword "Super-herói" na temporada.
+    rarity: seasonal
+    icon: "🦸"
+    xp_reward: 110
+    rule: { type: count_keyword_period, theme_key: summer_blockbusters, keyword_id: 9882, target: 3 }
+
+  # ===== Magia de Fim de Ano (winter_magic) =====
+  - id: season_magic_family_5
+    title: Sessão família
+    description: 5 títulos de Família na temporada de fim de ano.
+    rarity: seasonal
+    icon: "🧣"
+    xp_reward: 150
+    rule: { type: count_genre_period, theme_key: winter_magic, genre: Família, target: 5 }
+  - id: season_magic_feelgood_5
+    title: Noite aconchegante
+    description: 5 títulos da curadoria "Clima de fim de ano".
+    rarity: seasonal
+    icon: "🎄"
+    xp_reward: 180
+    rule: { type: count_tmdb_ids_period, theme_key: winter_magic, list_id: feel_good, target: 5 }
+  - id: season_magic_christmas_3
+    title: Espírito natalino
+    description: 3 títulos com keyword "Natal" na temporada.
+    rarity: seasonal
+    icon: "🎅"
+    xp_reward: 100
+    rule: { type: count_keyword_period, theme_key: winter_magic, keyword_id: 207317, target: 3 }

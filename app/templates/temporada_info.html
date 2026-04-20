@@ -1,46 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Temporada{% endblock %}
-{% block body_class %}page-season-info{% endblock %}
+{% block body_class %}page-season-info page-react{% endblock %}
 {% block body %}
-<main class="conquistas-main">
-  <h1 class="section-title">Como funciona a temporada</h1>
-  <p class="text-muted">A temporada é o ciclo competitivo do app: ela organiza desafios, acompanha pontos e dá foco para vocês explorarem temas diferentes ao longo do ano.</p>
-
-  <section class="filter-modal-panel--glass conquistas-card">
-    <h2 class="conquistas-title">Conceito</h2>
-    <p class="conquistas-desc">Cada temporada tem um tema central e objetivos de progresso. A ideia é variar o que vocês assistem, com missões e conquistas especiais para manter a experiência divertida.</p>
-  </section>
-
-  <section class="filter-modal-panel--glass conquistas-card">
-    <h2 class="conquistas-title">Duração</h2>
-    <p class="conquistas-desc">A temporada atual dura <strong>um trimestre</strong> (3 meses). O app cria automaticamente os ciclos no formato <span class="chip">AAAA-Q1</span>, <span class="chip">AAAA-Q2</span>, <span class="chip">AAAA-Q3</span> e <span class="chip">AAAA-Q4</span>.</p>
-  </section>
-
-  <section class="filter-modal-panel--glass conquistas-card">
-    <h2 class="conquistas-title">Exemplos de temas e filmes que combinam</h2>
-    <ul class="conquistas-list" role="list">
-      <li class="conquistas-card">
-        <p class="conquistas-title">Temporada de premiações</p>
-        <p class="conquistas-desc">Dramas, biografias e filmes com destaque crítico. Exemplo: clássicos dramáticos e obras indicadas ao Oscar.</p>
-      </li>
-      <li class="conquistas-card">
-        <p class="conquistas-title">Blocos de verão</p>
-        <p class="conquistas-desc">Ação, aventura e entretenimento de alto impacto. Exemplo: franquias de ação, sci-fi popular e blockbusters.</p>
-      </li>
-      <li class="conquistas-card">
-        <p class="conquistas-title">Noites de mistério</p>
-        <p class="conquistas-desc">Thrillers, suspense e terror. Exemplo: filmes de tensão psicológica, investigação e horror.</p>
-      </li>
-      <li class="conquistas-card">
-        <p class="conquistas-title">Magia de fim de ano</p>
-        <p class="conquistas-desc">Filmes aconchegantes, família, fantasia e clássicos da época. Exemplo: títulos festivos e aventuras leves.</p>
-      </li>
-    </ul>
-  </section>
-
-  <section class="filter-modal-panel--glass conquistas-card">
-    <h2 class="conquistas-title">Conquistas sazonais</h2>
-    <p class="conquistas-desc">As conquistas sazonais aparecem na página de conquistas com o filtro <strong>Conquistas sazonais</strong>. Elas variam por mês e tema da temporada, incentivando gêneros específicos.</p>
-  </section>
+<main class="season-hub-main">
+  <div id="season-root" class="season-shell" aria-busy="true">
+    <noscript>
+      <section class="season-shell-fallback">
+        <h1>Temporada atual</h1>
+        <p>Habilite JavaScript para ver os detalhes da temporada, conquistas sazonais e listas curadas.</p>
+      </section>
+    </noscript>
+    <section class="season-shell-fallback" aria-hidden="true">
+      <p class="text-muted">Preparando a temporada…</p>
+    </section>
+  </div>
 </main>
+{% endblock %}
+{% block scripts_extra %}
+{{ vite_entry_tags('season') }}
 {% endblock %}

@@ -1,0 +1,202 @@
+/* Welcome — seleção de perfil ativo, liquid glass premium. */
+
+.welcome-root {
+  position: relative;
+  min-height: calc(100vh - 80px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(24px, 6vw, 64px) clamp(16px, 4vw, 40px);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.welcome-bg-orb {
+  position: absolute;
+  width: 60vmax;
+  height: 60vmax;
+  border-radius: 50%;
+  filter: blur(110px);
+  pointer-events: none;
+  z-index: -1;
+  animation: welcomeOrb 18s ease-in-out infinite alternate;
+}
+.welcome-bg-orb--a {
+  top: -20vmax;
+  left: -10vmax;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(244, 114, 182, 0.45), transparent 70%);
+}
+.welcome-bg-orb--b {
+  bottom: -25vmax;
+  right: -15vmax;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(168, 85, 247, 0.45), transparent 70%);
+  animation-delay: -6s;
+}
+@keyframes welcomeOrb {
+  from { transform: translate3d(-4%, -2%, 0) scale(1); }
+  to { transform: translate3d(4%, 2%, 0) scale(1.08); }
+}
+
+.welcome-card {
+  position: relative;
+  max-width: 640px;
+  width: 100%;
+  padding: clamp(28px, 5vw, 52px);
+  border-radius: clamp(22px, 3vw, 34px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  align-items: center;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(22, 18, 32, 0.82) 0%, rgba(10, 8, 18, 0.94) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  overflow: hidden;
+}
+
+.welcome-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(244, 114, 182, 0.12);
+  border: 1px solid rgba(244, 114, 182, 0.3);
+  font-family: var(--rx-font-ui);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #fbcfe8;
+}
+
+.welcome-title {
+  margin: 0;
+  font-family: var(--rx-font-display);
+  font-size: clamp(2rem, 1.2rem + 4vw, 3.4rem);
+  line-height: 1;
+}
+
+.welcome-hint {
+  margin: 0;
+  max-width: 460px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.55;
+  font-size: 14.5px;
+}
+
+.welcome-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.welcome-vs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  color: #f472b6;
+  filter: drop-shadow(0 4px 12px rgba(244, 114, 182, 0.5));
+}
+
+.welcome-pick {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+}
+
+.welcome-pick .rx-btn {
+  width: 100%;
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  border-radius: 22px;
+  font-size: 17px;
+  line-height: 1.2;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.welcome-pick--rose .rx-btn {
+  background: linear-gradient(135deg, rgba(244, 114, 182, 0.22), rgba(244, 114, 182, 0.08));
+  border-color: rgba(244, 114, 182, 0.35);
+  box-shadow: 0 14px 30px rgba(244, 114, 182, 0.18);
+}
+.welcome-pick--rose .rx-btn:hover,
+.welcome-pick--rose.is-active .rx-btn {
+  background: linear-gradient(135deg, rgba(244, 114, 182, 0.35), rgba(244, 114, 182, 0.12));
+  border-color: rgba(244, 114, 182, 0.55);
+  box-shadow: 0 20px 40px rgba(244, 114, 182, 0.3);
+}
+
+.welcome-pick--violet .rx-btn {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(168, 85, 247, 0.08));
+  border-color: rgba(168, 85, 247, 0.35);
+  box-shadow: 0 14px 30px rgba(168, 85, 247, 0.18);
+}
+.welcome-pick--violet .rx-btn:hover,
+.welcome-pick--violet.is-active .rx-btn {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(168, 85, 247, 0.12));
+  border-color: rgba(168, 85, 247, 0.55);
+  box-shadow: 0 20px 40px rgba(168, 85, 247, 0.3);
+}
+
+.welcome-pick-emoji {
+  font-size: 2.4rem;
+  line-height: 1;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45));
+}
+
+.welcome-pick-label {
+  font-family: var(--rx-font-display);
+  font-size: 1.2rem;
+  letter-spacing: -0.01em;
+}
+
+.welcome-pick-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-family: var(--rx-font-ui);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.welcome-hints {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12.5px;
+  font-family: var(--rx-font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.welcome-hints span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 480px) {
+  .welcome-actions {
+    flex-direction: column;
+  }
+  .welcome-vs {
+    transform: rotate(90deg);
+  }
+}

@@ -17,19 +17,24 @@ def _quarter_dates(year: int, q: int) -> tuple[datetime, datetime]:
 
 
 def ensure_current_season(db, GameSeason) -> None:
+    from .season_themes import SEASON_THEMES
+
     today = date.today()
     y, m = today.year, today.month
     q = (m - 1) // 3 + 1
     label = f"{y}-Q{q}"
     if GameSeason.query.filter_by(label=label).first():
         return
-    themes = {
-        1: ("winter_awards", "Temporada de Premiações", "🎭"),
-        2: ("summer_blockbusters", "Blocos de Verão", "🌅"),
-        3: ("autumn_thriller", "Noites de Mistério", "🌙"),
-        4: ("winter_magic", "Magia de Fim de Ano", "✨"),
+    quarter_to_theme = {
+        1: "winter_awards",
+        2: "summer_blockbusters",
+        3: "autumn_thriller",
+        4: "winter_magic",
     }
-    key, title, trophy = themes[q]
+    key = quarter_to_theme[q]
+    theme = SEASON_THEMES.get(key, {})
+    title = theme.get("title") or key.replace("_", " ").title()
+    trophy = theme.get("emoji") or "🏆"
     start, end = _quarter_dates(y, q)
     missions = [
         {"id": "m1", "title": "Assistir 5 filmes", "target": 5, "xp": 40},

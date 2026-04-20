@@ -1,13 +1,47 @@
 {% extends "base.html" %}
 {% block title %}Quem está usando?{% endblock %}
-{% block body_class %}page-welcome{% endblock %}
+{% block body_class %}page-welcome page-react{% endblock %}
 {% block body %}
-<main class="welcome-main filter-modal-panel--glass">
-  <h1 class="welcome-title">Quem está usando este aparelho agora?</h1>
-  <p class="text-muted welcome-hint">Usamos isto para Swipe, apostas e conquistas. Pode trocar depois no topo.</p>
-  <div class="welcome-actions">
-    <button type="button" class="btn-primary welcome-profile-pick" data-profile-slug="a">{{ profile_label_a }}</button>
-    <button type="button" class="btn-primary welcome-profile-pick" data-profile-slug="b">{{ profile_label_b }}</button>
+<main class="welcome-main">
+  <div
+    id="welcome-root"
+    class="welcome-shell"
+    data-label-a="{{ profile_label_a }}"
+    data-label-b="{{ profile_label_b }}"
+    aria-busy="true"
+  >
+    <noscript>
+      <section class="welcome-shell-fallback">
+        <h1>Quem está usando este aparelho agora?</h1>
+        <p>Habilite JavaScript para selecionar o perfil ativo.</p>
+      </section>
+    </noscript>
+    <section class="welcome-shell-fallback welcome-shell-fallback--pe">
+      <p class="text-muted">Preparando a interface…</p>
+      <p class="text-muted welcome-pe-hint">Se ficar preso aqui (bundle lento ou rede), escolha o perfil abaixo — funciona sem o React.</p>
+      <div class="welcome-pe-actions">
+        <button type="button" class="btn-primary js-welcome-pick" data-slug="a">{{ profile_label_a }}</button>
+        <button type="button" class="btn-primary js-welcome-pick" data-slug="b">{{ profile_label_b }}</button>
+      </div>
+    </section>
   </div>
 </main>
+{% endblock %}
+{% block scripts_extra %}
+<script>
+(function () {
+  function pick(slug) {
+    try {
+      localStorage.setItem("movies_app_active_profile_slug", slug === "b" ? "b" : "a");
+    } catch (e) { /* ignore */ }
+    window.location.href = "/";
+  }
+  document.querySelectorAll("#welcome-root .js-welcome-pick").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      pick(btn.getAttribute("data-slug") || "a");
+    });
+  });
+})();
+</script>
+{{ vite_entry_tags('welcome') }}
 {% endblock %}

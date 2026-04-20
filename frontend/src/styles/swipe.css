@@ -1,0 +1,288 @@
+/* SwipeApp — deck animado liquid glass. */
+
+.swipe-root {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(20px, 3vw, 36px);
+  padding-bottom: clamp(48px, 6vw, 96px);
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.swipe-hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(26px, 4vw, 44px) clamp(20px, 4vw, 38px);
+  border-radius: clamp(22px, 3vw, 30px);
+  background:
+    radial-gradient(120% 100% at 10% 10%, rgba(244, 114, 182, 0.24), transparent 60%),
+    radial-gradient(120% 100% at 90% 80%, rgba(167, 139, 250, 0.22), transparent 60%),
+    linear-gradient(180deg, rgba(18, 20, 32, 0.7) 0%, rgba(12, 14, 22, 0.45) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  isolation: isolate;
+}
+
+.swipe-hero-aura {
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(45% 45% at 20% 20%, rgba(244, 114, 182, 0.4), transparent 70%),
+    radial-gradient(45% 45% at 85% 80%, rgba(167, 139, 250, 0.3), transparent 70%);
+  filter: blur(80px);
+  z-index: -1;
+  animation: swipeAura 16s ease-in-out infinite alternate;
+}
+@keyframes swipeAura {
+  from { transform: translate3d(-2%, -2%, 0); }
+  to { transform: translate3d(3%, 2%, 0); }
+}
+
+.swipe-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(244, 114, 182, 0.15);
+  border: 1px solid rgba(244, 114, 182, 0.3);
+  font-family: var(--rx-font-ui);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fbcfe8;
+}
+
+.swipe-hero-title {
+  margin: 10px 0 6px;
+  font-family: var(--rx-font-display);
+  font-size: clamp(2rem, 1.4rem + 3.6vw, 3rem);
+  line-height: 1.05;
+}
+
+.swipe-hero-sub {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.swipe-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.swipe-stat {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+  text-align: center;
+}
+.swipe-stat--match {
+  background: rgba(244, 114, 182, 0.1);
+  border-color: rgba(244, 114, 182, 0.35);
+}
+.swipe-stat-value {
+  display: block;
+  font-family: var(--rx-font-display);
+  font-size: 1.6rem;
+  color: #fff;
+  line-height: 1;
+}
+.swipe-stat-label {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--rx-font-ui);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.swipe-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 16px;
+}
+.swipe-source-seg {
+  flex: 1;
+}
+.swipe-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-family: var(--rx-font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.swipe-filter-btn:hover {
+  background: rgba(167, 139, 250, 0.18);
+  border-color: rgba(167, 139, 250, 0.4);
+}
+
+/* Deck */
+.swipe-deck {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  max-height: 520px;
+  border-radius: 22px;
+}
+
+.swipe-skeleton {
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
+  overflow: hidden;
+}
+
+.swipe-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(12, 14, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 30px 60px -24px rgba(0, 0, 0, 0.6);
+  cursor: grab;
+  user-select: none;
+}
+
+.swipe-card-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.swipe-card-ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 96px;
+  color: rgba(255, 255, 255, 0.18);
+}
+
+.swipe-card-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 40%, rgba(0, 0, 0, 0.9) 100%);
+  pointer-events: none;
+}
+
+.swipe-card-body {
+  position: relative;
+  padding: 20px 22px 24px;
+  color: #fff;
+  z-index: 1;
+}
+
+.swipe-card-chip {
+  display: inline-flex;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  font-family: var(--rx-font-ui);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.swipe-card-title {
+  margin: 0;
+  font-family: var(--rx-font-display);
+  font-size: 1.5rem;
+  line-height: 1.1;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
+.swipe-stamp {
+  position: absolute;
+  top: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  font-family: var(--rx-font-ui);
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  border-radius: 10px;
+  border: 3px solid currentColor;
+  pointer-events: none;
+  text-transform: uppercase;
+  backdrop-filter: blur(4px);
+}
+.swipe-stamp--like {
+  right: 24px;
+  color: #22c55e;
+  transform: rotate(10deg);
+  background: rgba(34, 197, 94, 0.12);
+}
+.swipe-stamp--pass {
+  left: 24px;
+  color: #f43f5e;
+  transform: rotate(-10deg);
+  background: rgba(244, 63, 94, 0.12);
+}
+
+/* Actions */
+.swipe-actions-row {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+}
+.swipe-hint {
+  text-align: center;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: var(--rx-font-ui);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Sheet */
+.swipe-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.swipe-sheet-count {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-family: var(--rx-font-ui);
+  font-size: 13px;
+}
+.swipe-genre-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Shell */
+.swipe-shell-fallback {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

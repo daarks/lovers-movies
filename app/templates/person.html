@@ -1,91 +1,22 @@
 {% extends "base.html" %}
-{% block title %}{{ name }}{% endblock %}
-{% block body_class %}page-person{% endblock %}
+{% block title %}Pessoa{% endblock %}
+{% block body_class %}page-person page-react{% endblock %}
 {% block header_logo_class %}nav-preserve-scroll{% endblock %}
 {% block body %}
-
-<a href="javascript:history.back()" class="technical-back nav-preserve-scroll">&#8592; Voltar</a>
-
-<section class="person-hero">
-  <div class="person-hero-inner">
-    <div class="person-photo-wrap">
-      {% if profile_path %}
-      <img class="person-photo" src="https://image.tmdb.org/t/p/w300{{ profile_path }}" alt="" loading="eager">
-      {% else %}
-      <div class="person-photo-ph" aria-hidden="true">👤</div>
-      {% endif %}
-    </div>
-    <div class="person-head">
-      <h1 class="person-name">{{ name }}</h1>
-      {% if known_for_department %}
-      <p class="person-known">{{ known_for_department }}</p>
-      {% endif %}
-    </div>
+<main class="person-main">
+  <div id="person-root" class="person-shell" data-person-id="{{ person_id }}" aria-busy="true">
+    <noscript>
+      <section class="person-shell-fallback">
+        <h1>Detalhes da pessoa</h1>
+        <p>Habilite JavaScript para ver a biografia e os créditos.</p>
+      </section>
+    </noscript>
+    <section class="person-shell-fallback" aria-hidden="true">
+      <p class="text-muted">Carregando biografia…</p>
+    </section>
   </div>
-</section>
-
-<div class="person-content">
-  {% if biography %}
-  <section class="technical-section">
-    <h2 class="technical-section-title">Biografia</h2>
-    <p class="technical-overview person-bio">{{ biography }}</p>
-  </section>
-  {% endif %}
-
-  {% if movie_rows %}
-  <section class="technical-section">
-    <h2 class="technical-section-title">Cinema</h2>
-    <div class="person-film-grid">
-      {% for row in movie_rows %}
-      <a class="person-film-card nav-preserve-scroll" href="{{ url_for('details', media_type='movie', tmdb_id=row.tmdb_id) }}">
-        <div class="person-film-poster">
-          {% if row.poster_path %}
-          <img src="https://image.tmdb.org/t/p/w92{{ row.poster_path }}" alt="" loading="lazy">
-          {% else %}
-          <span class="person-film-ph" aria-hidden="true">🎬</span>
-          {% endif %}
-        </div>
-        <div class="person-film-body">
-          <span class="person-film-title">{{ row.title }}</span>
-          <span class="person-film-role">{{ row.role }}</span>
-          {% if row.release_date %}
-          <span class="person-film-date">{{ row.release_date|date_br }}</span>
-          {% endif %}
-        </div>
-      </a>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
-
-  {% if tv_rows %}
-  <section class="technical-section">
-    <h2 class="technical-section-title">Televisão</h2>
-    <div class="person-film-grid">
-      {% for row in tv_rows %}
-      <a class="person-film-card nav-preserve-scroll" href="{{ url_for('details', media_type='tv', tmdb_id=row.tmdb_id) }}">
-        <div class="person-film-poster">
-          {% if row.poster_path %}
-          <img src="https://image.tmdb.org/t/p/w92{{ row.poster_path }}" alt="" loading="lazy">
-          {% else %}
-          <span class="person-film-ph" aria-hidden="true">📺</span>
-          {% endif %}
-        </div>
-        <div class="person-film-body">
-          <span class="person-film-title">{{ row.title }}</span>
-          <span class="person-film-role">{{ row.role }}</span>
-          {% if row.release_date %}
-          <span class="person-film-date">{{ row.release_date|date_br }}</span>
-          {% endif %}
-        </div>
-      </a>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
-
-  {% if not movie_rows and not tv_rows %}
-  <p class="home-browse-empty">Sem créditos listados no TMDB.</p>
-  {% endif %}
-</div>
+</main>
+{% endblock %}
+{% block scripts_extra %}
+{{ vite_entry_tags('person') }}
 {% endblock %}

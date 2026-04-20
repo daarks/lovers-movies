@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Instalação na Raspberry Pi (ou Debian/Ubuntu):
-# - venv + dependências (incl. gunicorn)
+# - pacotes de sistema (python3-venv, openssl, Node.js 20 LTS)
+# - venv + dependências Python (incl. gunicorn)
+# - build do frontend React/Vite (app/static/build/)
 # - monta /etc/movies-app.env a partir de secrets.env na raiz do repo
 # - systemd: serviço movies-app, inicia no boot, reinicia se cair
 #
@@ -11,6 +13,10 @@
 #   sudo ./install-rpi.sh
 #   sudo ./install-rpi.sh /caminho/absoluto/para/movies-app/app
 #
+# Flags:
+#   SKIP_FRONTEND=1 sudo ./install-rpi.sh   # pula npm ci && npm run build
+#   SKIP_APT=1 sudo ./install-rpi.sh        # pula apt-get update/install
+#
 # Padrão: 0.0.0.0:8080 (LAN e, com redirecionamento no roteador, internet).
 # Se quiser só local: FLASK_BIND=127.0.0.1:8080 em secrets.env
 #
@@ -18,16 +24,22 @@ set -euo pipefail
 
 RED='\033[0;31m'
 GRN='\033[0;32m'
+YLW='\033[0;33m'
 RST='\033[0m'
 
 die() { echo -e "${RED}Erro:${RST} $*" >&2; exit 1; }
+info() { echo -e "${GRN}→${RST} $*"; }
+warn() { echo -e "${YLW}!${RST} $*"; }
 
 [[ "$(id -u)" -eq 0 ]] || die "Execute com sudo: sudo $0"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${1:-$REPO_ROOT/app}"
 DEPLOY_DIR="$REPO_ROOT/deploy"
+FRONTEND_DIR="$REPO_ROOT/frontend"
 SECRETS_SRC="$REPO_ROOT/secrets.env"
+SKIP_FRONTEND="${SKIP_FRONTEND:-0}"
+SKIP_APT="${SKIP_APT:-0}"
 
 [[ -f "$APP_DIR/app.py" ]] || die "Não achei app.py em: $APP_DIR"
 [[ -f "$DEPLOY_DIR/start-gunicorn.sh" ]] || die "Pasta deploy incompleta em: $DEPLOY_DIR"
@@ -70,11 +82,57 @@ build_env_file() {
   fi
 }
 
-echo -e "${GRN}→${RST} Instalando pacotes de sistema (python3-venv)…"
-apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip openssl
+# Verifica se Node.js atende a versão mínima (>=18). Retorna 0 se ok.
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local major
+  major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  [[ "$major" =~ ^[0-9]+$ ]] || return 1
+  [[ "$major" -ge 18 ]]
+}
 
-echo -e "${GRN}→${RST} Criando venv e instalando requirements…"
+install_nodejs() {
+  info "Instalando Node.js 20 LTS (NodeSource)…"
+  # NodeSource suporta Debian/Ubuntu em armv7/arm64/x64.
+  apt-get install -y -qq curl ca-certificates gnupg
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y -qq nodejs
+}
+
+# -------------------------------------------------------------------
+# 1) Pacotes de sistema
+# -------------------------------------------------------------------
+if [[ "$SKIP_APT" == "1" ]]; then
+  warn "SKIP_APT=1 definido — pulando apt-get."
+else
+  info "Instalando pacotes de sistema (python3-venv, openssl, curl)…"
+  apt-get update -qq
+  apt-get install -y -qq python3 python3-venv python3-pip openssl curl ca-certificates
+fi
+
+# -------------------------------------------------------------------
+# 2) Node.js (apenas se o frontend for buildado)
+# -------------------------------------------------------------------
+if [[ "$SKIP_FRONTEND" != "1" ]]; then
+  if ! node_ok; then
+    if [[ "$SKIP_APT" == "1" ]]; then
+      warn "Node.js >= 18 ausente, mas SKIP_APT=1 — pulando instalação."
+    else
+      install_nodejs
+    fi
+  fi
+  if node_ok; then
+    info "Node.js $(node -v) / npm $(npm -v) disponíveis."
+  else
+    warn "Node.js >= 18 não disponível. O build do frontend será pulado."
+    SKIP_FRONTEND=1
+  fi
+fi
+
+# -------------------------------------------------------------------
+# 3) Python venv + deps
+# -------------------------------------------------------------------
+info "Criando venv e instalando requirements…"
 if [[ ! -d "$APP_DIR/.venv" ]]; then
   sudo -u "$SVC_USER" python3 -m venv "$APP_DIR/.venv"
 fi
@@ -83,13 +141,45 @@ sudo -u "$SVC_USER" "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.t
 
 chmod +x "$DEPLOY_DIR/start-gunicorn.sh"
 
+# -------------------------------------------------------------------
+# 4) Build do frontend (React/Vite → app/static/build/)
+# -------------------------------------------------------------------
+if [[ "$SKIP_FRONTEND" == "1" ]]; then
+  warn "Pulando build do frontend (SKIP_FRONTEND=1 ou Node indisponível)."
+  if [[ ! -f "$APP_DIR/static/build/manifest.json" ]]; then
+    warn "Nenhum build prévio encontrado em $APP_DIR/static/build/ —"
+    warn "a UI pode quebrar até você rodar: cd $FRONTEND_DIR && npm ci && npm run build"
+  fi
+else
+  if [[ ! -f "$FRONTEND_DIR/package.json" ]]; then
+    warn "frontend/package.json não encontrado — pulando build."
+  else
+    info "Instalando dependências do frontend (npm ci)…"
+    # Roda como SVC_USER para manter node_modules/ e build/ com o dono correto
+    sudo -u "$SVC_USER" -H bash -c "cd '$FRONTEND_DIR' && npm ci --no-audit --no-fund"
+
+    info "Gerando bundle React/Vite (npm run build)…"
+    sudo -u "$SVC_USER" -H bash -c "cd '$FRONTEND_DIR' && npm run build"
+
+    # Garante que o serviço (rodando como SVC_USER) lê os assets
+    chown -R "$SVC_USER:$SVC_USER" "$APP_DIR/static/build" 2>/dev/null || true
+    info "Build do frontend concluído em $APP_DIR/static/build/."
+  fi
+fi
+
+# -------------------------------------------------------------------
+# 5) /etc/movies-app.env
+# -------------------------------------------------------------------
 TMP_ENV="$(mktemp)"
 build_env_file "$TMP_ENV"
 install -m 0600 "$TMP_ENV" /etc/movies-app.env
 chown root:root /etc/movies-app.env
 rm -f "$TMP_ENV"
-echo -e "${GRN}→${RST} Atualizado /etc/movies-app.env a partir de $SECRETS_SRC"
+info "Atualizado /etc/movies-app.env a partir de $SECRETS_SRC"
 
+# -------------------------------------------------------------------
+# 6) Unit systemd
+# -------------------------------------------------------------------
 UNIT_PATH="/etc/systemd/system/movies-app.service"
 TMP_UNIT="$(mktemp)"
 sed -e "s|__APP_DIR__|${APP_DIR}|g" \
@@ -117,3 +207,5 @@ echo ""
 echo "Comandos úteis:"
 echo "  sudo systemctl status movies-app"
 echo "  sudo journalctl -u movies-app -f"
+echo "  # Rebuild só do frontend (sem mexer no serviço):"
+echo "  cd $FRONTEND_DIR && npm run build && sudo systemctl restart movies-app"

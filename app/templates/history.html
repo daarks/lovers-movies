@@ -1,125 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Histórico{% endblock %}
-{% block body_class %}page-history{% endblock %}
+{% block body_class %}page-history page-react{% endblock %}
 {% block nav_history %} is-active{% endblock %}
 {% block head_extra %}
   <meta name="view-transition" content="same-origin">
 {% endblock %}
 {% block body %}
-<main class="page-home page-history-main" id="page-history" data-page="history">
-  <section class="search-section">
-    <div class="search-wrap" id="search-wrap-history">
-      <input
-        type="search"
-        id="search-input-history"
-        class="search-input"
-        name="q"
-        placeholder="Buscar filme ou série..."
-        autocomplete="off"
-        aria-autocomplete="list"
-        aria-expanded="false"
-        aria-controls="search-dropdown-history"
-      />
-      <div id="search-dropdown-history" class="search-dropdown" role="listbox" hidden></div>
-    </div>
-  </section>
-
-  {% if items %}
-  <div class="home-list-toolbar">
-    <button type="button" class="btn-filter-open" id="filter-open-btn" aria-haspopup="dialog" aria-controls="filter-modal">
-      Filtrar minha lista
-    </button>
+<main class="page-history-main" id="page-history" data-page="history">
+  <div id="history-root" class="history-shell" aria-busy="true">
+    <noscript>
+      <section class="history-shell-fallback">
+        <h1>Histórico</h1>
+        <p>Essa área precisa de JavaScript ligado para mostrar o modo premium.</p>
+      </section>
+    </noscript>
+    <section class="history-shell-fallback" aria-hidden="true">
+      <p class="text-muted">Carregando histórico…</p>
+    </section>
   </div>
-
-  <div class="filter-modal" id="filter-modal" hidden>
-    <div class="filter-modal-backdrop" id="filter-modal-backdrop" tabindex="-1"></div>
-    <div class="filter-modal-panel filter-modal-panel--glass" role="dialog" aria-modal="true" aria-labelledby="filter-modal-title">
-      <h2 class="filter-modal-title" id="filter-modal-title">Filtrar lista</h2>
-      <p class="filter-modal-hint">Combine os critérios. A nota filtra por <strong>valor exato</strong> (inclui médias com meio ponto em séries).</p>
-
-      <form id="filter-modal-form" action="#" novalidate>
-        <fieldset class="filter-fieldset filter-fieldset--compact">
-          <legend>Tipo</legend>
-          <div class="filter-segment" role="radiogroup" aria-label="Tipo de mídia">
-            <label class="filter-segment-item"><input type="radio" name="filter-media" value="all" checked><span>Todos</span></label>
-            <label class="filter-segment-item"><input type="radio" name="filter-media" value="movie"><span>Filmes</span></label>
-            <label class="filter-segment-item"><input type="radio" name="filter-media" value="tv"><span>Séries</span></label>
-          </div>
-        </fieldset>
-
-        <fieldset class="filter-fieldset filter-fieldset--compact">
-          <legend>Gênero</legend>
-          <div class="filter-chip-grid">
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="all" checked><span>Qualquer</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="terror"><span>Terror</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="drama"><span>Drama</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="suspense"><span>Suspense</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="acao"><span>Ação</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="aventura"><span>Aventura</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="animacao"><span>Animação</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="ficcao"><span>Ficção científica</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="novela"><span>Novela</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="policial"><span>Policial</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="comedia"><span>Comédia</span></label>
-            <label class="filter-chip"><input type="radio" name="filter-genre" value="romance"><span>Romance</span></label>
-          </div>
-        </fieldset>
-
-        <fieldset class="filter-fieldset filter-fieldset--compact">
-          <legend>Nota exata (1 a 10)</legend>
-          <div class="filter-star-grid">
-            <label class="filter-star-pill"><input type="radio" name="filter-rating" value="any" checked><span>Qualquer</span></label>
-            {% for n in range(1, 11) %}
-            <label class="filter-star-pill"><input type="radio" name="filter-rating" value="{{ n }}"><span>{{ n }}★</span></label>
-            {% endfor %}
-          </div>
-        </fieldset>
-
-        <div class="filter-modal-actions">
-          <button type="submit" class="btn-primary" id="filter-apply-btn">Aplicar filtros</button>
-          <button type="button" class="btn-secondary-full" id="filter-clear-btn">Limpar filtros</button>
-          <button type="button" class="btn-text" id="filter-cancel-btn">Cancelar</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <p class="filter-empty-msg" id="filter-empty-msg" hidden>Nenhum resultado para esses filtros.</p>
-
-  <div class="cards-grid" id="cards-grid">
-    {% for item in items %}
-    <a
-      class="media-card nav-preserve-scroll"
-      href="{{ url_for('details', media_type=item.media_type, tmdb_id=item.tmdb_id) }}"
-      data-media-type="{{ item.media_type }}"
-      data-rating="{{ '%.2f'|format(item.rating) }}"
-      data-genres="{{ (item.genres or '')|lower }}"
-    >
-      <div class="media-card-poster">
-        {% if item.poster_path %}
-        <img
-          src="https://image.tmdb.org/t/p/w300{{ item.poster_path }}"
-          alt=""
-          loading="lazy"
-        >
-        {% else %}
-        <div class="media-card-placeholder" aria-hidden="true">🎬</div>
-        {% endif %}
-      </div>
-      <div class="media-card-body">
-        <h2 class="media-card-title">{{ item.title }}</h2>
-        <div class="media-card-stars stars-fractional" aria-label="{{ '%.1f'|format(item.rating)|replace('.', ',') }} de 10">
-          {% set fills = item.rating|star_fills %}
-          {% for f in fills %}
-          <span class="star-bit" style="--star-fill: {{ f }}" aria-hidden="true"></span>
-          {% endfor %}
-        </div>
-      </div>
-    </a>
-    {% endfor %}
-  </div>
-  {% else %}
-  <p class="empty-state">Nenhum filme ou série no histórico ainda. Busque acima ou comece pela página <a href="{{ url_for('index') }}">Assistir</a>.</p>
-  {% endif %}
 </main>
+{% endblock %}
+{% block scripts_extra %}
+{{ vite_entry_tags('history') }}
 {% endblock %}

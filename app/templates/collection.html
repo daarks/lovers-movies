@@ -1,41 +1,22 @@
 {% extends "base.html" %}
-{% block title %}{{ name }} — Coleção{% endblock %}
-{% block body_class %}page-collection{% endblock %}
+{% block title %}Coleção{% endblock %}
+{% block body_class %}page-collection page-react{% endblock %}
 {% block header_logo_class %}nav-preserve-scroll{% endblock %}
 {% block body %}
-
-<a href="javascript:history.back()" class="technical-back nav-preserve-scroll">&#8592; Voltar</a>
-
-<header class="collection-header">
-  <h1 class="collection-title">{{ name }}</h1>
-  {% if overview %}
-  <p class="collection-overview">{{ overview }}</p>
-  {% endif %}
-</header>
-
-<div class="collection-content">
-  {% if parts %}
-  <div class="home-media-slider sugg-gemini-slider collection-parts-slider" role="region">
-    <div class="home-media-slider-track sugg-gemini-slider-track">
-      {% for p in parts %}
-      <a class="home-media-card nav-preserve-scroll" href="{{ url_for('details', media_type='movie', tmdb_id=p.tmdb_id) }}">
-        <div class="home-media-card-poster">
-          {% if p.poster_path %}
-          <img src="https://image.tmdb.org/t/p/w185{{ p.poster_path }}" alt="" loading="lazy">
-          {% else %}
-          <span class="home-media-card-ph" aria-hidden="true">🎬</span>
-          {% endif %}
-        </div>
-        <span class="home-media-card-title">{{ p.title }}</span>
-        {% if p.release_date %}
-        <span class="home-media-card-meta">{{ p.release_date|date_br }}</span>
-        {% endif %}
-      </a>
-      {% endfor %}
-    </div>
+<main class="collection-main">
+  <div id="collection-root" class="collection-shell" data-collection-id="{{ collection_id }}" aria-busy="true">
+    <noscript>
+      <section class="collection-shell-fallback">
+        <h1>Coleção</h1>
+        <p>Habilite JavaScript para ver todos os filmes desta coleção.</p>
+      </section>
+    </noscript>
+    <section class="collection-shell-fallback" aria-hidden="true">
+      <p class="text-muted">Montando a coleção…</p>
+    </section>
   </div>
-  {% else %}
-  <p class="home-browse-empty">Esta coleção não tem partes listadas.</p>
-  {% endif %}
-</div>
+</main>
+{% endblock %}
+{% block scripts_extra %}
+{{ vite_entry_tags('collection') }}
 {% endblock %}

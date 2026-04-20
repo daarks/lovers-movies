@@ -1,6 +1,7 @@
 /* Service Worker — estáticos cache-first; HTML/API network-first com fallback */
-var STATIC_CACHE = "nossa-lista-static-v1";
-var RUNTIME_CACHE = "nossa-lista-runtime-v1";
+/* v3-premium.3: corrige ciclo ESM vendor-react/vendor-baseui agrupando em vendor-ui. */
+var STATIC_CACHE = "nossa-lista-static-v3-premium-3";
+var RUNTIME_CACHE = "nossa-lista-runtime-v3-premium-3";
 var PRECACHE_URLS = [
   "/static/style.css",
   "/static/app.js",
@@ -8,6 +9,13 @@ var PRECACHE_URLS = [
   "/static/manifest.webmanifest",
   "/static/offline.html"
 ];
+
+/* Assets versionados pelo Vite (/static/build/assets/*.[hash].js) mudam
+   de hash a cada build; tratamos como "stale-while-revalidate" para
+   sobrescrever bundles antigos sem quebrar offline. */
+function isViteBuildAsset(url) {
+  return url.pathname.indexOf("/static/build/") === 0;
+}
 
 self.addEventListener("install", function (event) {
   event.waitUntil(
@@ -49,6 +57,26 @@ self.addEventListener("fetch", function (event) {
   if (req.method !== "GET") return;
   var url = new URL(req.url);
   if (url.origin !== location.origin) return;
+
+  if (isViteBuildAsset(url)) {
+    event.respondWith(
+      caches.match(req).then(function (cached) {
+        var network = fetch(req)
+          .then(function (res) {
+            if (res.ok) {
+              var copy = res.clone();
+              caches.open(STATIC_CACHE).then(function (c) {
+                c.put(req, copy);
+              });
+            }
+            return res;
+          })
+          .catch(function () { return cached; });
+        return cached || network;
+      })
+    );
+    return;
+  }
 
   if (isStaticAsset(url)) {
     event.respondWith(

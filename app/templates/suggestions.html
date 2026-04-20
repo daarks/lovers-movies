@@ -1,88 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Sugestões{% endblock %}
-{% block body_class %}page-suggestions{% endblock %}
+{% block body_class %}page-suggestions page-react{% endblock %}
 {% block body %}
 <main class="suggestions-main" id="suggestions-page" data-page="suggestions">
-  <h1 class="suggestions-page-title">Sugestões</h1>
-
-  <section class="suggestions-section" aria-labelledby="sugg-random-title">
-    <h2 class="suggestions-section-title" id="sugg-random-title">Sugestão aleatória</h2>
-    <div class="suggestions-media-toggle" role="group" aria-label="Filmes ou séries">
-      <button type="button" class="sugg-toggle-btn is-active" data-sugg-media="movie" aria-pressed="true">Filmes</button>
-      <button type="button" class="sugg-toggle-btn" data-sugg-media="tv" aria-pressed="false">Séries</button>
-    </div>
-    <div class="sugg-genre-grid" id="sugg-genre-chips">
-      <button type="button" class="sugg-genre-chip" data-genre-id="27" data-theme="terror">Terror</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="18" data-theme="drama">Drama</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="53" data-theme="suspense">Suspense</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="28" data-theme="acao">Ação</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="12" data-theme="aventura">Aventura</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="16" data-theme="animacao">Animação</button>
-      <button type="button" class="sugg-genre-chip" data-keyword-id="210024" data-theme="animacao" title="Palavra-chave anime no TMDB">Anime</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="878" data-theme="ficcao">Ficção Científica</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="10766" data-theme="novela" title="Novela — gênero Soap no TMDB">Novela</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="80" data-theme="policial">Policial</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="35" data-theme="comedia">Comédia</button>
-      <button type="button" class="sugg-genre-chip" data-genre-id="10749" data-theme="romance" title="Gênero Romance no TMDB">Romance</button>
-      <button type="button" class="sugg-genre-chip is-active" data-genre-id="" data-keyword-id="" data-theme="default">🎲 Qualquer gênero</button>
-    </div>
-    <button type="button" class="btn-primary sugg-primary-btn" id="sugg-random-btn">Sugerir!</button>
-    <div class="sugg-result-wrap" id="sugg-random-result" hidden>
-      <div class="sugg-result-inner" id="sugg-random-inner"></div>
-      <button type="button" class="btn-secondary-full" id="sugg-random-again">Sortear outro</button>
-    </div>
-  </section>
-
-  <div class="suggestions-divider" role="presentation"></div>
-
-  <section class="suggestions-section" aria-labelledby="sugg-kw-title">
-    <h2 class="suggestions-section-title" id="sugg-kw-title">Por palavras-chave</h2>
-    <p class="suggestions-subtitle suggestions-hint">Busque no TMDB e escolha até 10 palavras-chave. O primeiro sorteio exige que o título tenha <strong>todas</strong>; se não houver resultado, tentamos com <strong>qualquer uma</strong> delas.</p>
-    <div class="suggestions-media-toggle sugg-kw-media" role="group" aria-label="Filme ou série no sorteio">
-      <button type="button" class="sugg-kw-media-btn is-active" data-kw-media="movie" aria-pressed="true">Filmes</button>
-      <button type="button" class="sugg-kw-media-btn" data-kw-media="tv" aria-pressed="false">Séries</button>
-    </div>
-    <p class="suggestions-subtitle suggestions-kw-presets-hint">Sugestões rápidas (curadas; não é a lista completa do TMDB):</p>
-    <div class="sugg-kw-presets" id="sugg-kw-presets" role="list" aria-label="Palavras-chave em destaque"></div>
-    <div class="sugg-kw-search-wrap">
-      <input type="search" id="sugg-kw-input" class="search-input" placeholder="Buscar palavra-chave…" autocomplete="off" aria-label="Buscar palavra-chave" aria-controls="sugg-kw-dropdown">
-      <div id="sugg-kw-dropdown" class="search-dropdown sugg-kw-dropdown" role="listbox" hidden></div>
-    </div>
-    <div class="sugg-kw-chips" id="sugg-kw-selected" aria-live="polite"></div>
-    <p class="form-error" id="sugg-kw-error" hidden></p>
-    <button type="button" class="btn-primary sugg-primary-btn" id="sugg-kw-btn">Sortear</button>
-    <div class="sugg-result-wrap" id="sugg-kw-result" hidden>
-      <div class="sugg-result-inner" id="sugg-kw-inner"></div>
-      <button type="button" class="btn-secondary-full" id="sugg-kw-again">Sortear de novo</button>
-    </div>
-  </section>
-
-  <div class="suggestions-divider" role="presentation"></div>
-
-  <section class="suggestions-section" aria-labelledby="sugg-gemini-title">
-    <h2 class="suggestions-section-title" id="sugg-gemini-title">Baseado nos seus gostos</h2>
-    <p class="suggestions-subtitle">Adicione filmes ou séries que vocês curtem</p>
-    <div class="sugg-gemini-scope" role="group" aria-label="Tipo de sugestão do Gemini">
-      <span class="sugg-gemini-scope-label">Sugerir:</span>
-      <button type="button" class="sugg-gemini-scope-btn" data-gemini-scope="movie">Filmes</button>
-      <button type="button" class="sugg-gemini-scope-btn" data-gemini-scope="tv">Séries</button>
-      <button type="button" class="sugg-gemini-scope-btn is-active" data-gemini-scope="mixed">Mista</button>
-    </div>
-    <div class="sugg-gemini-inputs" id="sugg-gemini-inputs">
-      <div class="sugg-input-row" data-sugg-input-row>
-        <div class="sugg-autocomplete-wrap">
-          <input type="text" class="sugg-gemini-input" name="liked_titles[]" placeholder="Ex: Interestelar, Bacurau, The Bear" autocomplete="off" aria-label="Título que você gostou">
-          <div class="sugg-autocomplete-dropdown" hidden></div>
-        </div>
-        <button type="button" class="sugg-remove-input" hidden aria-label="Remover campo">&times;</button>
-      </div>
-    </div>
-    <div class="sugg-gemini-actions">
-      <button type="button" class="btn-secondary" id="sugg-add-input">+ Adicionar</button>
-    </div>
-    <p class="form-error" id="sugg-gemini-error" hidden></p>
-    <button type="button" class="btn-primary sugg-primary-btn" id="sugg-gemini-btn">Gerar sugestões</button>
-    <div class="sugg-gemini-results" id="sugg-gemini-results" hidden></div>
-  </section>
+  <div id="suggestions-root" class="suggestions-shell" aria-busy="true">
+    <noscript>
+      <section class="suggestions-shell-fallback">
+        <h1>Sugestões</h1>
+        <p>Essa área precisa de JavaScript ligado para mostrar o modo premium.</p>
+      </section>
+    </noscript>
+    <section class="suggestions-shell-fallback" aria-hidden="true">
+      <p class="text-muted">Carregando sugestões…</p>
+    </section>
+  </div>
 </main>
+{% endblock %}
+{% block scripts_extra %}
+{{ vite_entry_tags('suggestions') }}
 {% endblock %}
