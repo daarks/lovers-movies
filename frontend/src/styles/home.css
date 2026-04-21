@@ -14,7 +14,8 @@
   position: relative;
   isolation: isolate;
   padding: clamp(56px, 11vw, 132px) clamp(18px, 5vw, 64px) clamp(36px, 6vw, 64px);
-  overflow: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
   border-radius: 0 0 var(--rx-radius-2xl) var(--rx-radius-2xl);
   background:
     radial-gradient(80% 60% at 15% 5%, rgba(192, 132, 252, 0.28), transparent 65%),
@@ -128,7 +129,7 @@
   left: 0;
   right: 0;
   top: calc(100% + 8px);
-  z-index: var(--rx-z-raised);
+  z-index: var(--rx-z-autocomplete);
 }
 .home-search-dropdown {
   background: var(--rx-glass-elevated);

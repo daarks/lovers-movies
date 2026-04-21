@@ -342,5 +342,40 @@
 .dx-sheet-dl dt { color: var(--rx-text-muted); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem; }
 .dx-sheet-dl dd { margin: 0; color: var(--rx-text); display: inline-flex; align-items: center; gap: 6px; }
 
-/* Review card (Jinja) */
+/* Review card (Jinja) — shell alinhado ao DS premium */
 .details-review-block { max-width: 1100px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); margin-top: var(--rx-space-6); }
+
+.details-review-card--premium {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--rx-radius-xl);
+  padding: clamp(20px, 4vw, 28px);
+  background: var(--rx-glass-plate);
+  border: 1px solid var(--rx-border-soft);
+  box-shadow: var(--rx-shadow-md);
+  backdrop-filter: blur(var(--rx-glass-blur-md)) saturate(var(--rx-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--rx-glass-blur-md)) saturate(var(--rx-glass-saturate));
+}
+.details-review-card__aura {
+  position: absolute;
+  inset: -40%;
+  background: var(--rx-grad-mesh);
+  opacity: 0.35;
+  filter: blur(40px);
+  pointer-events: none;
+  z-index: 0;
+}
+.details-review-card--premium > *:not(.details-review-card__aura) {
+  position: relative;
+  z-index: 1;
+}
+.details-review-card--premium .details-review-card__title {
+  font-family: var(--rx-font-display);
+  letter-spacing: -0.02em;
+  margin-top: 0;
+}
+.details-review-card--premium .btn-primary,
+.details-review-card--premium .btn-secondary,
+.details-review-card--premium .btn-danger {
+  border-radius: var(--rx-radius-sm);
+}

@@ -24,6 +24,7 @@ import {
   Skeleton,
   SegmentedToggle,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface GenreRow { name: string; count: number; percent: number }
 interface TopRow { id: number; tmdb_id: number; media_type: string; title: string; poster_path?: string | null; rating: number; genres: string }
@@ -90,7 +91,7 @@ export default function StatsApp() {
   const reduce = useReducedMotion();
 
   useEffect(() => {
-    fetch("/api/stats/overview")
+    fetch(appUrl("/api/stats/overview"))
       .then((r) => r.json())
       .then((d: StatsPayload) => setData(d))
       .catch(() => setData(null))
@@ -201,13 +202,13 @@ export default function StatsApp() {
                 <span className="stats-metric-label">Títulos no total</span>
               </div>
             </div>
-            <div className="stats-metric">
+            <a href="/historico?media=movie" className="stats-metric stats-metric--link nav-preserve-scroll">
               <span className="stats-metric-icon stats-metric-icon--movie"><Film size={18} /></span>
               <div>
                 <span className="stats-metric-value"><NumberTicker value={data.n_movie} /></span>
                 <span className="stats-metric-label">Filmes</span>
               </div>
-            </div>
+            </a>
             <div className="stats-metric">
               <span className="stats-metric-icon stats-metric-icon--tv"><Tv size={18} /></span>
               <div>

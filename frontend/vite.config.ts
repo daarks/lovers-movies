@@ -1,12 +1,26 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 
 // Build de múltiplas "ilhas" React por rota do Flask, com chunks compartilhados.
 // Cada template Jinja carrega seu entry via helper `vite_entry_tags()`.
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const flaskProxy = env.VITE_FLASK_PROXY_TARGET || "http://127.0.0.1:5000";
+
+  return {
   plugins: [react()],
   base: "/static/build/",
+  server: {
+    proxy: {
+      // Dev: `npm run dev` em :5173 — pedidos à API Flask sem 404 no Vite.
+      "^/api/": { target: flaskProxy, changeOrigin: true },
+      "^/suggestions": { target: flaskProxy, changeOrigin: true },
+      "^/watch-later": { target: flaskProxy, changeOrigin: true },
+      "^/search": { target: flaskProxy, changeOrigin: true },
+      "^/static/data/": { target: flaskProxy, changeOrigin: true },
+    },
+  },
   build: {
     outDir: resolve(__dirname, "../app/static/build"),
     emptyOutDir: true,
@@ -77,4 +91,5 @@ export default defineConfig({
     sourcemap: true,
     target: "es2020",
   },
+};
 });

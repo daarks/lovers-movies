@@ -23,6 +23,7 @@ import {
   EmptyState,
   MediaPoster,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface Fact { label: string; value: string }
 
@@ -148,7 +149,7 @@ export default function TechnicalApp({ mediaType, tmdbId }: Props) {
   const scale = useTransform(scrollY, [0, 400], [1, reduce ? 1 : 1.08]);
 
   useEffect(() => {
-    fetch(`/api/technical/${mediaType}/${tmdbId}`)
+    fetch(appUrl(`/api/technical/${mediaType}/${tmdbId}`))
       .then((r) => r.json())
       .then((d) => setData(d?.error ? null : d))
       .catch(() => setData(null))

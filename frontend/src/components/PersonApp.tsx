@@ -10,6 +10,7 @@ import {
   Chip,
   MediaPoster,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface PersonCredit {
   tmdb_id: number;
@@ -68,7 +69,7 @@ export default function PersonApp({ personId }: PersonAppProps) {
   const bgOpacity = useTransform(scrollY, [0, 400], [0.4, 0.05]);
 
   useEffect(() => {
-    fetch(`/api/person/${personId}`)
+    fetch(appUrl(`/api/person/${personId}`))
       .then((r) => r.json())
       .then((d) => setData(d?.error ? null : d))
       .catch(() => setData(null))

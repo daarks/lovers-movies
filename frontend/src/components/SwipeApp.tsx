@@ -1,19 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform, useReducedMotion } from "framer-motion";
-import { Heart, Sparkles, Users, Check, X, Clapperboard, Tv, Filter, ListFilter } from "lucide-react";
+import { Heart, Sparkles, Users, Check, X, Clapperboard, Tv, ListFilter, ArrowLeft, Bookmark } from "lucide-react";
 import {
   GradientTitle,
   MagneticButton,
   ScrollReveal,
-  Sheet,
   SurfacePanel,
   ToastProvider,
   useToast,
   SegmentedToggle,
-  Chip,
   EmptyState,
   Skeleton,
+  cx,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
+import { SWIPE_GENRE_CHIPS, swipeGenreChipKey, type SwipeGenreChip } from "../lib/swipeGenreChips";
 
 interface DeckCard {
   tmdb_id: number;
@@ -23,24 +24,19 @@ interface DeckCard {
   state?: string;
 }
 
-interface DeckResponse { deck: DeckCard[]; message?: string }
+interface SessionPayload {
+  active: boolean;
+  source?: string;
+  media?: string;
+  genre_ids?: number[];
+  deck?: DeckCard[];
+  cursor_index?: number;
+  deck_total?: number;
+  error?: string;
+}
 
-type SourceMode = "watchlater" | "genre";
 type MediaType = "movie" | "tv";
-
-const GENRES: { id: string; label: string; theme: string }[] = [
-  { id: "27", label: "Terror", theme: "terror" },
-  { id: "18", label: "Drama", theme: "drama" },
-  { id: "53", label: "Suspense", theme: "suspense" },
-  { id: "28", label: "Ação", theme: "acao" },
-  { id: "12", label: "Aventura", theme: "aventura" },
-  { id: "16", label: "Animação", theme: "animacao" },
-  { id: "878", label: "Ficção científica", theme: "ficcao" },
-  { id: "10749", label: "Romance", theme: "romance" },
-  { id: "35", label: "Comédia", theme: "comedia" },
-  { id: "80", label: "Policial", theme: "crime" },
-  { id: "10766", label: "Novela", theme: "novela" },
-];
+type GateStep = "pick" | "newKind" | "newGenre" | null;
 
 const STATE_LABEL: Record<string, string> = {
   pending: "Novo",
@@ -53,6 +49,47 @@ const STATE_LABEL: Record<string, string> = {
 function posterUrl(path: string | null | undefined, size = "w342") {
   if (!path) return "";
   return `https://image.tmdb.org/t/p/${size}${path}`;
+}
+
+/** Deploys antigos podem não ter `POST /api/swipe/session`; o deck legado vem de `GET /api/swipe/deck` (menos cartas). */
+async function fetchSwipeDeckLegacy(body: Record<string, unknown>): Promise<SessionPayload | null> {
+  const source = String(body.source || "watchlater").toLowerCase();
+  if (source !== "watchlater" && source !== "genre") return null;
+  const qs = new URLSearchParams({ source });
+  if (source === "genre") {
+    const media = body.media === "tv" ? "tv" : "movie";
+    qs.set("media", media);
+    const raw = body.genre_ids;
+    const ids = Array.isArray(raw)
+      ? raw.filter((x): x is number => typeof x === "number" && Number.isFinite(x))
+      : [];
+    if (!ids.length) return null;
+    qs.set("genre_ids", ids.join(","));
+  }
+  const res = await fetch(appUrl(`/api/swipe/deck?${qs.toString()}`));
+  const rawText = await res.text();
+  let data: { deck?: DeckCard[] };
+  try {
+    data = rawText ? (JSON.parse(rawText) as { deck?: DeckCard[] }) : {};
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const deck = data.deck;
+  if (!Array.isArray(deck) || deck.length === 0) return null;
+  const gids =
+    source === "genre" && Array.isArray(body.genre_ids)
+      ? (body.genre_ids as unknown[]).filter((x): x is number => typeof x === "number" && Number.isFinite(x))
+      : undefined;
+  return {
+    active: true,
+    source: source as "watchlater" | "genre",
+    media: body.media === "tv" ? "tv" : "movie",
+    genre_ids: gids,
+    deck,
+    cursor_index: 0,
+    deck_total: deck.length,
+  };
 }
 
 function activeProfile(): "a" | "b" {
@@ -75,44 +112,201 @@ function haptic(pattern: number | number[] = 15) {
 function SwipeDeck() {
   const { toast } = useToast();
   const reduce = useReducedMotion();
-  const [source, setSource] = useState<SourceMode>("watchlater");
+  const [source, setSource] = useState<"watchlater" | "genre">("watchlater");
   const [media, setMedia] = useState<MediaType>("movie");
-  const [genres, setGenres] = useState<Set<string>>(new Set());
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [selectedGenreKeys, setSelectedGenreKeys] = useState<Set<string>>(new Set());
   const [deck, setDeck] = useState<DeckCard[]>([]);
   const [idx, setIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [matchCount, setMatchCount] = useState(0);
   const lastMatchIdRef = useRef(0);
+  const lastGenreReloadRef = useRef<{ media: MediaType; genre_ids: number[] } | null>(null);
+  /** Sem `POST /api/swipe/session` no servidor: deck via GET legado; não chamar refresh pós-ação (sessão inexistente). */
+  const legacySwipeRef = useRef(false);
+  const [gate, setGate] = useState<GateStep>("pick");
+  const [pendingSession, setPendingSession] = useState<SessionPayload | null>(null);
 
-  const deckUrl = useMemo(() => {
-    if (source === "watchlater") return "/api/swipe/deck?source=watchlater";
-    const ids = Array.from(genres).join(",");
-    return `/api/swipe/deck?source=genre&media=${encodeURIComponent(media)}&genre_ids=${encodeURIComponent(ids)}`;
-  }, [source, media, genres]);
+  useEffect(() => {
+    if (gate !== "newGenre") {
+      document.body.setAttribute("data-genre-theme", "default");
+      return;
+    }
+    if (selectedGenreKeys.size === 0) {
+      document.body.setAttribute("data-genre-theme", "default");
+      return;
+    }
+    if (selectedGenreKeys.size === 1) {
+      const k = [...selectedGenreKeys][0];
+      const chip = SWIPE_GENRE_CHIPS.find((c) => swipeGenreChipKey(c) === k);
+      document.body.setAttribute("data-genre-theme", chip?.theme || "default");
+    } else {
+      document.body.setAttribute("data-genre-theme", "default");
+    }
+  }, [gate, selectedGenreKeys]);
 
-  const loadDeck = useCallback(() => {
-    setLoading(true);
-    fetch(deckUrl)
-      .then((r) => r.json())
-      .then((d: DeckResponse) => {
+  const refreshSessionDeck = useCallback(async () => {
+    if (legacySwipeRef.current) {
+      return true;
+    }
+    try {
+      const r = await fetch(appUrl("/api/swipe/session"));
+      const d = (await r.json()) as SessionPayload;
+      if (d.active) {
         setDeck(d.deck || []);
         setIdx(0);
-      })
-      .catch(() => toast({ title: "Não consegui carregar o deck", kind: "error" }))
-      .finally(() => setLoading(false));
-  }, [deckUrl, toast]);
+        return true;
+      }
+      setDeck([]);
+      setIdx(0);
+      return false;
+    } catch {
+      toast({ title: "Não consegui sincronizar o deck", kind: "error" });
+      return false;
+    }
+  }, [toast]);
 
-  useEffect(() => { loadDeck(); }, [loadDeck]);
+  const applyStartedSession = useCallback((d: SessionPayload, body: Record<string, unknown>) => {
+    if (body.source === "genre" && Array.isArray(body.genre_ids)) {
+      const ids = (body.genre_ids as unknown[]).filter((x): x is number => typeof x === "number");
+      lastGenreReloadRef.current = {
+        media: (body.media as MediaType) || "movie",
+        genre_ids: ids,
+      };
+    } else {
+      lastGenreReloadRef.current = null;
+    }
+    setDeck(d.deck || []);
+    setIdx(0);
+    setGate(null);
+    setPendingSession(null);
+    if (body.source === "genre") setSource("genre");
+    if (body.source === "watchlater") setSource("watchlater");
+  }, []);
+
+  const startSession = useCallback(
+    async (body: Record<string, unknown>): Promise<boolean> => {
+      setLoading(true);
+      try {
+        const r = await fetch(appUrl("/api/swipe/session"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const text = await r.text();
+        let d: SessionPayload = {};
+
+        const tryLegacyDeck = async (): Promise<boolean> => {
+          if (r.status !== 404 && r.status !== 405) return false;
+          const leg = await fetchSwipeDeckLegacy(body);
+          if (!leg?.deck?.length) return false;
+          legacySwipeRef.current = true;
+          toast({
+            title: "Backend desatualizado",
+            description:
+              "O servidor não tem POST /api/swipe/session. A usar deck legado (até 20 títulos). Atualize o código no Raspberry Pi e reinicie o Gunicorn.",
+            kind: "info",
+          });
+          applyStartedSession(leg, body);
+          return true;
+        };
+
+        try {
+          d = text ? (JSON.parse(text) as SessionPayload) : {};
+        } catch {
+          if (await tryLegacyDeck()) return true;
+          toast({
+            title: "Resposta inválida do servidor",
+            description: text ? text.slice(0, 160) : undefined,
+            kind: "error",
+          });
+          return false;
+        }
+        if (!r.ok) {
+          if (await tryLegacyDeck()) return true;
+          toast({ title: d.error || "Não foi possível iniciar a sessão", kind: "error" });
+          return false;
+        }
+        legacySwipeRef.current = false;
+        applyStartedSession(d, body);
+        return true;
+      } catch {
+        toast({
+          title: "Erro de rede ou timeout",
+          description:
+            "Com vários géneros o servidor pode demorar a montar o deck. Tenta de novo dentro de instantes.",
+          kind: "error",
+        });
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [toast, applyStartedSession]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(appUrl("/api/swipe/session"))
+      .then((r) => r.json())
+      .then((d: SessionPayload) => {
+        if (cancelled) return;
+        const canResume = Boolean(d.active && (d.deck?.length ?? 0) > 0);
+        setPendingSession(canResume ? d : null);
+        setDeck([]);
+        setIdx(0);
+        setGate("pick");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPendingSession(null);
+          setDeck([]);
+          setIdx(0);
+          setGate("pick");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const endSession = useCallback(async () => {
+    legacySwipeRef.current = false;
+    try {
+      await fetch(appUrl("/api/swipe/session/end"), { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    setPendingSession(null);
+    setDeck([]);
+    setIdx(0);
+    setGate("pick");
+  }, []);
+
+  const continueSession = useCallback(() => {
+    if (pendingSession?.deck?.length) {
+      setDeck(pendingSession.deck as DeckCard[]);
+      setIdx(0);
+    }
+    setGate(null);
+    setPendingSession(null);
+  }, [pendingSession]);
 
   useEffect(() => {
     let timer: number | null = null;
-    fetch("/api/swipe/match-cursor")
+    fetch(appUrl("/api/swipe/match-cursor"))
       .then((r) => r.json())
-      .then((d: { last_id: number }) => { lastMatchIdRef.current = d.last_id || 0; })
-      .catch(() => { /* ignore */ });
+      .then((d: { last_id: number }) => {
+        lastMatchIdRef.current = d.last_id || 0;
+      })
+      .catch(() => {
+        /* ignore */
+      });
     timer = window.setInterval(() => {
-      fetch(`/api/swipe/matches?since_id=${lastMatchIdRef.current}`)
+      fetch(appUrl(`/api/swipe/matches?since_id=${lastMatchIdRef.current}`))
         .then((r) => r.json())
         .then((d: { items: { id: number; title?: string }[] }) => {
           const items = d.items || [];
@@ -122,21 +316,21 @@ function SwipeDeck() {
             setMatchCount((n) => n + 1);
           });
         })
-        .catch(() => { /* ignore */ });
+        .catch(() => {
+          /* ignore */
+        });
     }, 2800);
-    return () => { if (timer) clearInterval(timer); };
+    return () => {
+      if (timer) clearInterval(timer);
+    };
   }, [toast]);
 
   const current = deck[idx];
 
-  function advance() {
-    setIdx((i) => i + 1);
-  }
-
   async function act(action: "like" | "reject", card: DeckCard) {
     haptic(action === "like" ? 12 : [6, 4, 6]);
     try {
-      const res = await fetch("/api/swipe/action", {
+      const res = await fetch(appUrl("/api/swipe/action"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -158,35 +352,196 @@ function SwipeDeck() {
         setMatchCount((n) => n + 1);
         haptic([20, 40, 30]);
       }
+      if (legacySwipeRef.current) {
+        setIdx((i) => i + 1);
+      } else {
+        await refreshSessionDeck();
+      }
     } catch {
       toast({ title: "Erro ao registrar ação", kind: "error" });
     }
-    advance();
   }
 
-  function toggleGenre(id: string) {
-    setGenres((prev) => {
+  function toggleGenreChip(chip: SwipeGenreChip) {
+    const key = swipeGenreChipKey(chip);
+    setSelectedGenreKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
+    if (chip.genreId === "10766") setMedia("tv");
   }
 
-  function applySheet() {
-    if (!genres.size) {
-      toast({ title: "Selecione ao menos um gênero", kind: "error" });
+  const novelaSelected = selectedGenreKeys.has("g:10766");
+  const effectiveMedia: MediaType = novelaSelected ? "tv" : media;
+
+  async function confirmGenreSession() {
+    if (!selectedGenreKeys.size) {
+      toast({ title: "Selecione pelo menos um gênero", kind: "error" });
       return;
     }
-    setSource("genre");
-    setSheetOpen(false);
-  }
-
-  function resetToWatchlater() {
-    setSource("watchlater");
+    const ids = [...selectedGenreKeys]
+      .filter((k) => k.startsWith("g:"))
+      .map((k) => parseInt(k.slice(2), 10))
+      .filter((n) => !Number.isNaN(n));
+    if (!ids.length) {
+      toast({ title: "Escolha gêneros TMDB (os chips com ícone)", kind: "error" });
+      return;
+    }
+    const ok = await startSession({
+      source: "genre",
+      media: effectiveMedia,
+      genre_ids: ids,
+    });
+    if (ok) setSelectedGenreKeys(new Set());
   }
 
   const atEnd = !loading && (deck.length === 0 || idx >= deck.length);
+
+  async function onIniciarNovaSessao() {
+    await endSession();
+    setSelectedGenreKeys(new Set());
+    setGate("newKind");
+  }
+
+  if (gate === "pick") {
+    const left =
+      pendingSession != null
+        ? Math.max(0, (pendingSession.deck_total ?? 0) - (pendingSession.cursor_index ?? 0))
+        : 0;
+    const canContinue = Boolean(pendingSession?.deck && pendingSession.deck.length > 0);
+    return (
+      <div className="swipe-root">
+        <ScrollReveal>
+          <SurfacePanel className="swipe-session-gate" variant="plate" aura>
+            <span className="swipe-eyebrow"><Users size={14} /> Sessão do swipe</span>
+            <h2 className="swipe-gate-title">Sessão partilhada</h2>
+            <p className="swipe-hero-sub">
+              O mesmo deck para os <strong>dois perfis</strong> e para qualquer telemóvel — assim os matches batem certo.
+              {canContinue && left > 0
+                ? ` Há uma sessão ativa com cerca de ${left} título(s) por ver.`
+                : " Ainda não há sessão para continuar: usa “Iniciar nova sessão”."}
+            </p>
+            <div className="swipe-gate-actions swipe-gate-actions--three">
+              <MagneticButton variant="primary" onClick={() => void onIniciarNovaSessao()}>
+                <Sparkles size={16} /> Iniciar nova sessão
+              </MagneticButton>
+              <MagneticButton variant="glass" disabled={!canContinue} onClick={continueSession}>
+                <Heart size={16} /> Entrar na sessão atual
+              </MagneticButton>
+              <MagneticButton variant="ghost" onClick={() => void endSession()}>
+                Encerrar sessão
+              </MagneticButton>
+            </div>
+          </SurfacePanel>
+        </ScrollReveal>
+      </div>
+    );
+  }
+
+  if (gate === "newKind") {
+    return (
+      <div className="swipe-root">
+        <ScrollReveal>
+          <SurfacePanel className="swipe-session-gate" variant="plate" aura>
+            <span className="swipe-eyebrow"><Sparkles size={14} /> Nova sessão</span>
+            <h2 className="swipe-gate-title">Base do deck</h2>
+            <p className="swipe-hero-sub">
+              Escolha se o swipe vem da lista <strong>Ver depois</strong> ou de sugestões <strong>por gênero TMDB</strong>.
+            </p>
+            <div className="swipe-new-kind-grid">
+              <button
+                type="button"
+                className="swipe-new-kind-tile"
+                onClick={() => void startSession({ source: "watchlater" })}
+              >
+                <span className="swipe-new-kind-icon" aria-hidden="true"><Bookmark size={28} /></span>
+                <span className="swipe-new-kind-title">Ver depois</span>
+                <span className="swipe-new-kind-desc">Títulos que já guardaram para ver juntos</span>
+              </button>
+              <button
+                type="button"
+                className="swipe-new-kind-tile swipe-new-kind-tile--accent"
+                onClick={() => {
+                  setSelectedGenreKeys(new Set());
+                  setGate("newGenre");
+                }}
+              >
+                <span className="swipe-new-kind-icon" aria-hidden="true"><Clapperboard size={28} /></span>
+                <span className="swipe-new-kind-title">Por gênero</span>
+                <span className="swipe-new-kind-desc">Filme ou série + gêneros (cores e ícones como no resto do app)</span>
+              </button>
+            </div>
+            <MagneticButton variant="ghost" className="swipe-gate-back" onClick={() => setGate("pick")}>
+              <ArrowLeft size={16} /> Voltar
+            </MagneticButton>
+          </SurfacePanel>
+        </ScrollReveal>
+      </div>
+    );
+  }
+
+  if (gate === "newGenre") {
+    return (
+      <div className="swipe-root">
+        <ScrollReveal>
+          <SurfacePanel className="swipe-session-gate swipe-session-gate--wide" variant="plate" aura>
+            <span className="swipe-eyebrow"><Sparkles size={14} /> Por género</span>
+            <h2 className="swipe-gate-title">Filme ou série + gêneros</h2>
+            <p className="swipe-hero-sub">Selecione um ou mais chips. Novela força séries (TV).</p>
+            <div className={cx("swipe-genre-toolbar", novelaSelected && "swipe-genre-toolbar--novela")}>
+              <SegmentedToggle<MediaType>
+                value={novelaSelected ? "tv" : media}
+                onValueChange={(v) => {
+                  if (!novelaSelected) setMedia(v);
+                }}
+                ariaLabel="Filme ou série"
+                options={[
+                  { value: "movie", label: "Filmes", icon: <Clapperboard size={14} /> },
+                  { value: "tv", label: "Séries", icon: <Tv size={14} /> },
+                ]}
+              />
+              {novelaSelected ? (
+                <p className="swipe-genre-toolbar-hint">Novela usa sempre séries (TV).</p>
+              ) : null}
+            </div>
+            <p className="swipe-sheet-count">
+              {selectedGenreKeys.size === 0
+                ? "Nenhum gênero selecionado"
+                : `${selectedGenreKeys.size} gênero(s) selecionado(s)`}
+            </p>
+            <div className="swipe-genre-select-grid">
+              {SWIPE_GENRE_CHIPS.map((chip) => {
+                const key = swipeGenreChipKey(chip);
+                const active = selectedGenreKeys.has(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={cx("swipe-genre-tile", active && "is-active")}
+                    data-theme={chip.theme}
+                    onClick={() => toggleGenreChip(chip)}
+                  >
+                    <span className="swipe-genre-tile-emoji" aria-hidden="true">{chip.emoji}</span>
+                    <span className="swipe-genre-tile-label">{chip.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="swipe-gate-actions">
+              <MagneticButton variant="primary" block onClick={() => void confirmGenreSession()}>
+                <Heart size={16} /> Iniciar swipe com este deck
+              </MagneticButton>
+              <MagneticButton variant="ghost" onClick={() => setGate("newKind")}>
+                <ArrowLeft size={16} /> Voltar
+              </MagneticButton>
+            </div>
+          </SurfacePanel>
+        </ScrollReveal>
+      </div>
+    );
+  }
 
   return (
     <div className="swipe-root">
@@ -218,26 +573,14 @@ function SwipeDeck() {
       </ScrollReveal>
 
       <SurfacePanel className="swipe-toolbar">
-        <div className="swipe-source-seg">
-          <SegmentedToggle<SourceMode>
-            value={source}
-            onValueChange={(v) => {
-              if (v === "genre") {
-                setSheetOpen(true);
-              } else {
-                resetToWatchlater();
-              }
-            }}
-            ariaLabel="Origem do deck"
-            options={[
-              { value: "watchlater", label: "Ver depois" },
-              { value: "genre", label: "Por gênero" },
-            ]}
-          />
-        </div>
-        <button type="button" className="swipe-filter-btn" onClick={() => setSheetOpen(true)}>
-          <Filter size={16} /> Filtrar
-        </button>
+        <MagneticButton variant="glass" size="sm" onClick={() => setGate("pick")}>
+          <Users size={14} /> Sessão
+        </MagneticButton>
+        {deck.length > 0 ? (
+          <button type="button" className="swipe-filter-btn swipe-filter-btn--danger" onClick={() => void endSession()}>
+            Encerrar sessão
+          </button>
+        ) : null}
       </SurfacePanel>
 
       <div className="swipe-deck" aria-live="polite">
@@ -248,9 +591,21 @@ function SwipeDeck() {
         ) : atEnd ? (
           <EmptyState
             title="Fim do deck por agora"
-            description="Ajuste filtros ou adicione títulos em Ver depois para continuar."
+            description="Abre “Sessão” para criar uma nova ou recarrega com a mesma origem."
             action={
-              <MagneticButton variant="primary" onClick={loadDeck}>
+              <MagneticButton
+                variant="primary"
+                onClick={() => {
+                  const g = lastGenreReloadRef.current;
+                  void (source === "genre" && g?.genre_ids?.length
+                    ? startSession({
+                        source: "genre",
+                        media: g.media,
+                        genre_ids: g.genre_ids,
+                      })
+                    : startSession({ source: "watchlater" }));
+                }}
+              >
                 <ListFilter size={16} /> Recarregar deck
               </MagneticButton>
             }
@@ -278,18 +633,10 @@ function SwipeDeck() {
 
       {current && !atEnd && !loading && (
         <div className="swipe-actions-row">
-          <MagneticButton
-            variant="danger"
-            onClick={() => act("reject", current)}
-            aria-label="Recusar"
-          >
+          <MagneticButton variant="danger" onClick={() => act("reject", current)} aria-label="Recusar">
             <X size={18} /> Não
           </MagneticButton>
-          <MagneticButton
-            variant="success"
-            onClick={() => act("like", current)}
-            aria-label="Curtir"
-          >
+          <MagneticButton variant="success" onClick={() => act("like", current)} aria-label="Curtir">
             <Heart size={18} /> Curtir
           </MagneticButton>
         </div>
@@ -298,43 +645,6 @@ function SwipeDeck() {
       {current && !atEnd && (
         <p className="swipe-hint">{STATE_LABEL[current.state || "pending"] || "—"}</p>
       )}
-
-      <Sheet
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-        title={<span><Sparkles size={16} /> Swipe por gênero</span>}
-        subtitle="Escolha filme ou série e um ou mais gêneros."
-      >
-        <div className="swipe-sheet-body">
-          <SegmentedToggle<MediaType>
-            value={media}
-            onValueChange={setMedia}
-            ariaLabel="Filme ou série"
-            options={[
-              { value: "movie", label: "Filmes", icon: <Clapperboard size={14} /> },
-              { value: "tv", label: "Séries", icon: <Tv size={14} /> },
-            ]}
-          />
-          <p className="swipe-sheet-count">
-            {genres.size === 0 ? "Nenhum gênero selecionado" : `${genres.size} gênero(s) selecionado(s)`}
-          </p>
-          <div className="swipe-genre-grid">
-            {GENRES.map((g) => (
-              <Chip
-                key={g.id}
-                active={genres.has(g.id)}
-                onClick={() => toggleGenre(g.id)}
-                variant="accent"
-              >
-                {g.label}
-              </Chip>
-            ))}
-          </div>
-          <MagneticButton variant="primary" block onClick={applySheet}>
-            <Heart size={16} /> Aplicar e carregar deck
-          </MagneticButton>
-        </div>
-      </Sheet>
     </div>
   );
 }

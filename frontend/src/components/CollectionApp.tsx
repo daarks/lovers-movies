@@ -11,6 +11,7 @@ import {
   MediaPoster,
   SegmentedToggle,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface CollectionPart {
   tmdb_id: number;
@@ -55,7 +56,7 @@ export default function CollectionApp({ collectionId }: CollectionAppProps) {
   const scale = useTransform(scrollY, [0, 400], [1, reduce ? 1 : 1.1]);
 
   useEffect(() => {
-    fetch(`/api/collection/${collectionId}`)
+    fetch(appUrl(`/api/collection/${collectionId}`))
       .then((r) => r.json())
       .then((d) => setData(d?.error ? null : d))
       .catch(() => setData(null))

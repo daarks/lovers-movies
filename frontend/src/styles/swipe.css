@@ -286,3 +286,175 @@
   align-items: center;
   justify-content: center;
 }
+
+/* Fluxo de sessão (3 botões + nova origem + géneros) */
+.swipe-session-gate {
+  max-width: 28rem;
+  margin: 0 auto;
+  width: 100%;
+}
+.swipe-session-gate--wide {
+  max-width: 38rem;
+}
+.swipe-gate-title {
+  margin: 0.35rem 0 0;
+  font-family: var(--rx-font-display);
+  font-size: clamp(1.35rem, 1rem + 2vw, 1.85rem);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.swipe-gate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+.swipe-gate-actions--three {
+  gap: 11px;
+}
+.swipe-gate-back {
+  margin-top: 14px;
+  width: 100%;
+}
+
+.swipe-new-kind-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 18px;
+}
+@media (min-width: 520px) {
+  .swipe-new-kind-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.swipe-new-kind-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 16px 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+.swipe-new-kind-tile:hover {
+  border-color: rgba(244, 114, 182, 0.45);
+  transform: translateY(-2px);
+  box-shadow: 0 16px 40px -24px rgba(0, 0, 0, 0.65);
+}
+.swipe-new-kind-tile--accent:hover {
+  border-color: rgba(167, 139, 250, 0.55);
+}
+.swipe-new-kind-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgba(244, 114, 182, 0.15);
+  color: #fbcfe8;
+}
+.swipe-new-kind-tile--accent .swipe-new-kind-icon {
+  background: rgba(167, 139, 250, 0.2);
+  color: #ddd6fe;
+}
+.swipe-new-kind-title {
+  font-family: var(--rx-font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+.swipe-new-kind-desc {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.swipe-genre-toolbar {
+  margin-top: 14px;
+}
+.swipe-genre-toolbar--novela .rx-segmented {
+  opacity: 0.65;
+  pointer-events: none;
+}
+.swipe-genre-toolbar-hint {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.swipe-genre-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+.swipe-genre-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(12, 14, 22, 0.55);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.swipe-genre-tile:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.swipe-genre-tile.is-active {
+  border-color: rgba(244, 114, 182, 0.55);
+  box-shadow: 0 0 0 2px rgba(244, 114, 182, 0.18), 0 12px 32px -18px rgba(244, 114, 182, 0.35);
+}
+/* Acentos por tema (alinhado ao DS de sugestões / style.css body[data-genre-theme]) */
+.swipe-genre-tile[data-theme="terror"].is-active {
+  border-color: rgba(220, 38, 38, 0.55);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
+}
+.swipe-genre-tile[data-theme="drama"].is-active {
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+.swipe-genre-tile[data-theme="acao"].is-active {
+  border-color: rgba(249, 115, 22, 0.55);
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2);
+}
+.swipe-genre-tile[data-theme="romance"].is-active,
+.swipe-genre-tile[data-theme="novela"].is-active {
+  border-color: rgba(244, 114, 182, 0.55);
+  box-shadow: 0 0 0 2px rgba(244, 114, 182, 0.2);
+}
+.swipe-genre-tile[data-theme="ficcao"].is-active {
+  border-color: rgba(99, 102, 241, 0.55);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+.swipe-genre-tile[data-theme="comedia"].is-active {
+  border-color: rgba(250, 204, 21, 0.55);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.2);
+}
+.swipe-genre-tile[data-theme="policial"].is-active {
+  border-color: rgba(96, 165, 250, 0.55);
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+}
+.swipe-genre-tile-emoji {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.swipe-genre-tile-label {
+  font-family: var(--rx-font-ui);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.2;
+}

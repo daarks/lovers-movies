@@ -125,6 +125,23 @@ class SwipeItem(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
 
+class SwipeSession(db.Model):
+    """Deck de swipe partilhado pelo casal (mesma ordem para os dois perfis / dispositivos)."""
+
+    __tablename__ = "swipe_sessions"
+    __table_args__ = (UniqueConstraint("couple_id", name="uq_swipe_session_couple"),)
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    couple_id = db.Column(db.Integer, db.ForeignKey("couples.id"), nullable=False)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    source = db.Column(db.String(32), nullable=False)  # watchlater | genre
+    media = db.Column(db.String(8))  # movie | tv (genre)
+    genre_ids_csv = db.Column(db.String(256))
+    deck_json = db.Column(db.Text, nullable=False, default="[]")
+    cursor_index = db.Column(db.Integer, nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+
 class TodayPick(db.Model):
     """Anti-repetição: sugestões já mostradas no modo 'hoje'."""
 

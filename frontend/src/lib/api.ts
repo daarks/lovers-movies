@@ -1,3 +1,5 @@
+import { appUrl } from "./appBase";
+
 /** Cliente fetch mínimo para os endpoints JSON do Flask. */
 export type FetchOpts = {
   signal?: AbortSignal;
@@ -7,8 +9,9 @@ export type FetchOpts = {
 };
 
 function buildUrl(path: string, params?: FetchOpts["params"]) {
-  if (!params) return path;
-  const u = new URL(path, window.location.origin);
+  const abs = appUrl(path);
+  if (!params) return abs;
+  const u = new URL(abs, window.location.origin);
   for (const [k, v] of Object.entries(params)) {
     if (v === null || v === undefined || v === "") continue;
     u.searchParams.set(k, String(v));

@@ -20,6 +20,23 @@ const RARITY_ORDER: Record<string, number> = {
   common: 5,
 };
 
+function rarityLabelPt(rarity: string | undefined): string {
+  switch ((rarity || "").toLowerCase()) {
+    case "common":
+      return "Comum";
+    case "rare":
+      return "Raro";
+    case "epic":
+      return "Épico";
+    case "legendary":
+      return "Lendário";
+    case "seasonal":
+      return "Sazonal";
+    default:
+      return rarity || "—";
+  }
+}
+
 export default function ConquistasApp() {
   const [items, setItems] = useState<AchievementItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -211,11 +228,11 @@ export default function ConquistasApp() {
                     <div className="cq-card-title-block">
                       <h3 className="cq-card-title">{a.title}</h3>
                       <div className="cq-card-tags">
-                        <span className={classNames("rx-chip", `rx-chip--${a.rarity}`)}>
-                          {a.rarity}
+                        <span className={classNames("rx-chip", a.rarity && `rx-chip--${a.rarity}`)}>
+                          {rarityLabelPt(a.rarity)}
                         </span>
                         {a.group === "sazonal" && (
-                          <span className="rx-chip rx-chip--gold">sazonal</span>
+                          <span className="rx-chip rx-chip--gold">Sazonal</span>
                         )}
                       </div>
                     </div>

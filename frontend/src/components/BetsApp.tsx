@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Dices, Trophy, Clock, Flag, Sparkles, Zap } from "lucide-react";
 import { GradientTitle, NumberTicker, ScrollReveal, SurfacePanel, EmptyState, Skeleton, Chip } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface BetCard {
   tmdb_id: number;
@@ -41,7 +42,7 @@ export default function BetsApp() {
   const reduce = useReducedMotion();
 
   useEffect(() => {
-    fetch("/api/bets/overview")
+    fetch(appUrl("/api/bets/overview"))
       .then((r) => r.json())
       .then((d: BetsOverview) => setData(d))
       .catch(() => setData(null))

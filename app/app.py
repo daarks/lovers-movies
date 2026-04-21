@@ -38,6 +38,7 @@ from models import (
     Profile,
     SeasonProfileScore,
     SwipeItem,
+    SwipeSession,
     TodayPick,
     TriviaCache,
     WatchedItem,
@@ -2560,6 +2561,7 @@ def create_app() -> Flask:
 
         body = request.get_json(silent=True) or {}
         genre_id = body.get("genre_id")
+        genre_ids_raw = body.get("genre_ids")
         keyword_id_raw = body.get("keyword_id")
         media_type = body.get("media_type")
         if media_type not in (None, "movie", "tv"):
@@ -2574,21 +2576,39 @@ def create_app() -> Flask:
             except (TypeError, ValueError):
                 return jsonify({"error": "keyword_id inválido"}), 400
 
-        with_genres = None
-        if with_keywords is None and genre_id is not None and genre_id != "":
-            if isinstance(genre_id, str) and genre_id.strip().lower() in (
-                "soap",
-                "novela",
-            ):
-                with_genres = SOAP_NOVELA_GENRE_ID
-            else:
-                try:
-                    with_genres = int(genre_id)
-                except (TypeError, ValueError):
-                    return jsonify({"error": "genre_id inválido"}), 400
+        with_genres: int | str | None = None
+        if with_keywords is None:
+            parsed_multi: list[int] = []
+            if isinstance(genre_ids_raw, list) and genre_ids_raw:
+                for raw in genre_ids_raw[:12]:
+                    try:
+                        parsed_multi.append(int(raw))
+                    except (TypeError, ValueError):
+                        continue
+                parsed_multi = list(dict.fromkeys(parsed_multi))
+            if parsed_multi:
+                # TMDB Discover: pipe (|) = OR entre gêneros
+                with_genres = "|".join(str(g) for g in parsed_multi)
+            elif genre_id is not None and genre_id != "":
+                if isinstance(genre_id, str) and genre_id.strip().lower() in (
+                    "soap",
+                    "novela",
+                ):
+                    with_genres = SOAP_NOVELA_GENRE_ID
+                else:
+                    try:
+                        with_genres = int(genre_id)
+                    except (TypeError, ValueError):
+                        return jsonify({"error": "genre_id inválido"}), 400
 
         # Gênero Soap (novelas): no TMDB quase só existem séries; discover/movie costuma vir vazio.
-        if with_genres == SOAP_NOVELA_GENRE_ID:
+        if with_genres is not None and (
+            with_genres == SOAP_NOVELA_GENRE_ID
+            or (
+                isinstance(with_genres, str)
+                and str(SOAP_NOVELA_GENRE_ID) in with_genres.split("|")
+            )
+        ):
             media_type = "tv"
 
         def try_discover(mt, min_votes, pages):
@@ -2627,7 +2647,11 @@ def create_app() -> Flask:
             results, media_type = try_discover(media_type, 1, pages_pool[:])
 
         # Ainda vazio com novela: tentar o outro tipo de mídia uma vez
-        if not results and with_genres == SOAP_NOVELA_GENRE_ID:
+        _has_novela = with_genres == SOAP_NOVELA_GENRE_ID or (
+            isinstance(with_genres, str)
+            and str(SOAP_NOVELA_GENRE_ID) in with_genres.split("|")
+        )
+        if not results and _has_novela:
             other = "movie" if media_type == "tv" else "tv"
             results, media_type = try_discover(other, 1, pages_pool[:])
 
@@ -4226,54 +4250,291 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         db.session.commit()
         return jsonify(payload)
 
+    def _swipe_swiped_out_keys(swipe_cid: int) -> set[tuple[int, str]]:
+        return {
+            (s.tmdb_id, s.media_type)
+            for s in SwipeItem.query.filter(
+                SwipeItem.couple_id == swipe_cid,
+                SwipeItem.state.in_(("matched", "rejected")),
+            ).all()
+        }
+
+    def _swipe_attach_card_states(swipe_cid: int, cards: list[dict]) -> list[dict]:
+        for card in cards:
+            row = SwipeItem.query.filter_by(
+                couple_id=swipe_cid,
+                tmdb_id=card["tmdb_id"],
+                media_type=card["media_type"],
+            ).first()
+            if row:
+                card["state"] = row.state
+            else:
+                card.setdefault("state", "pending")
+        return cards
+
+    def _build_swipe_watchlater_deck(swipe_cid: int, excluded: set[tuple[int, str]], limit: int) -> list[dict]:
+        out: list[dict] = []
+        for wl in WatchLaterItem.query.order_by(WatchLaterItem.added_at.desc()).limit(max(limit * 2, 40)):
+            key = (wl.tmdb_id, wl.media_type)
+            if key in excluded:
+                continue
+            out.append(
+                {
+                    "tmdb_id": wl.tmdb_id,
+                    "media_type": wl.media_type,
+                    "title": wl.title,
+                    "poster_path": wl.poster_path,
+                    "state": "pending",
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+
+    def _build_swipe_genre_deck_round_robin(
+        media: str,
+        parsed_ids: list[int],
+        excluded: set[tuple[int, str]],
+        limit: int,
+    ) -> list[dict]:
+        if not parsed_ids:
+            return []
+        n = len(parsed_ids)
+        quotas = [limit // n] * n
+        for r in range(limit % n):
+            quotas[r] += 1
+
+        def _one_genre_bucket(gid_quota: tuple[int, int]) -> list[dict]:
+            gid, quota = gid_quota
+            bucket: list[dict] = []
+            seen_local: set[tuple[int, str]] = set()
+            if quota <= 0:
+                return bucket
+            for min_votes in (40, 1):
+                if len(bucket) >= quota:
+                    break
+                for page in range(1, 9):
+                    if len(bucket) >= quota:
+                        break
+                    j = _tmdb_json_cached(
+                        f"{TMDB_BASE}/discover/{media}",
+                        {
+                            "language": TMDB_LANG,
+                            "with_genres": str(gid),
+                            "sort_by": "popularity.desc",
+                            "page": page,
+                            "vote_count.gte": min_votes,
+                        },
+                        ttl=180,
+                        timeout=12.0,
+                        op=f"swipe_discover_{media}_{gid}_p{page}_v{min_votes}",
+                    )
+                    if not isinstance(j, dict):
+                        continue
+                    for it in (j.get("results") or [])[:25]:
+                        tid = it.get("id")
+                        if not tid:
+                            continue
+                        key = (int(tid), media)
+                        if key in excluded or key in seen_local:
+                            continue
+                        seen_local.add(key)
+                        tit = (
+                            it.get("title") if media == "movie" else it.get("name")
+                        ) or ""
+                        bucket.append(
+                            {
+                                "tmdb_id": int(tid),
+                                "media_type": media,
+                                "title": tit,
+                                "poster_path": it.get("poster_path"),
+                                "state": "pending",
+                            }
+                        )
+                        if len(bucket) >= quota:
+                            break
+            return bucket
+
+        workers = min(6, max(1, n))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            buckets = list(pool.map(_one_genre_bucket, zip(parsed_ids, quotas)))
+        deck: list[dict] = []
+        seen: set[tuple[int, str]] = set()
+        max_len = max((len(b) for b in buckets), default=0)
+        for r in range(max_len):
+            for b in buckets:
+                if r < len(b):
+                    c = b[r]
+                    k = (c["tmdb_id"], c["media_type"])
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    deck.append(c)
+                if len(deck) >= limit:
+                    return deck
+        return deck[:limit]
+
+    def _sync_swipe_session_cursor(swipe_cid: int) -> None:
+        sess = SwipeSession.query.filter_by(couple_id=swipe_cid, active=True).first()
+        if not sess or not sess.deck_json:
+            return
+        try:
+            deck_full = json.loads(sess.deck_json)
+        except (TypeError, json.JSONDecodeError):
+            return
+        if not isinstance(deck_full, list):
+            return
+        i = max(0, int(sess.cursor_index or 0))
+        while i < len(deck_full):
+            c = deck_full[i]
+            try:
+                tid = int(c.get("tmdb_id", 0))
+            except (TypeError, ValueError):
+                i += 1
+                continue
+            mt = str(c.get("media_type") or "")
+            row = SwipeItem.query.filter_by(
+                couple_id=swipe_cid, tmdb_id=tid, media_type=mt
+            ).first()
+            st = (row.state if row else "pending") or "pending"
+            if st in ("matched", "rejected"):
+                i += 1
+                continue
+            break
+        sess.cursor_index = i
+        sess.updated_at = datetime.utcnow()
+
+    def _swipe_session_json(swipe_cid: int, sess: SwipeSession) -> dict:
+        try:
+            deck_full = json.loads(sess.deck_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            deck_full = []
+        if not isinstance(deck_full, list):
+            deck_full = []
+        cur = max(0, min(int(sess.cursor_index or 0), len(deck_full)))
+        visible = [dict(x) for x in deck_full[cur:]]
+        _swipe_attach_card_states(swipe_cid, visible)
+        gids: list[int] = []
+        if sess.genre_ids_csv:
+            for p in sess.genre_ids_csv.split(","):
+                p = p.strip()
+                if p.isdigit():
+                    gids.append(int(p))
+        return {
+            "active": True,
+            "source": sess.source,
+            "media": sess.media,
+            "genre_ids": gids,
+            "deck": visible,
+            "cursor_index": cur,
+            "deck_total": len(deck_full),
+        }
+
     @app.get("/casal")
     def couple_swipe_page():
         return render_template("couple_swipe.html")
 
+    @app.get("/api/swipe/session")
+    def api_swipe_session_get():
+        cid = _couple_id()
+        sess = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
+        if not sess:
+            return jsonify({"active": False})
+        return jsonify(_swipe_session_json(cid, sess))
+
+    @app.post("/api/swipe/session/end")
+    def api_swipe_session_end():
+        cid = _couple_id()
+        sess = SwipeSession.query.filter_by(couple_id=cid).first()
+        if sess:
+            sess.active = False
+            sess.updated_at = datetime.utcnow()
+            db.session.commit()
+        return jsonify({"ok": True})
+
+    @app.post("/api/swipe/session")
+    def api_swipe_session_start():
+        cid = _couple_id()
+        try:
+            body = request.get_json(silent=True) or {}
+            source = (body.get("source") or "watchlater").strip().lower()
+            if source not in ("watchlater", "genre"):
+                return jsonify({"error": "source inválido"}), 400
+            excluded = _swipe_swiped_out_keys(cid)
+            genre_ids_csv = ""
+            media = (body.get("media") or "movie").strip()
+            if media not in ("movie", "tv"):
+                media = "movie"
+            if source == "watchlater":
+                deck = _build_swipe_watchlater_deck(cid, excluded, 100)
+            else:
+                raw_ids = body.get("genre_ids")
+                parsed_ids: list[int] = []
+                if isinstance(raw_ids, list):
+                    for x in raw_ids[:12]:
+                        try:
+                            parsed_ids.append(int(x))
+                        except (TypeError, ValueError):
+                            continue
+                parsed_ids = list(dict.fromkeys(parsed_ids))
+                if not parsed_ids:
+                    return jsonify({"error": "Selecione ao menos um gênero"}), 400
+                if SOAP_NOVELA_GENRE_ID in parsed_ids:
+                    media = "tv"
+                genre_ids_csv = ",".join(str(x) for x in parsed_ids)
+                deck = _build_swipe_genre_deck_round_robin(
+                    media, parsed_ids, excluded, 100
+                )
+            sess = SwipeSession.query.filter_by(couple_id=cid).first()
+            if not sess:
+                sess = SwipeSession(
+                    couple_id=cid,
+                    active=True,
+                    source=source,
+                    media=media if source == "genre" else None,
+                    genre_ids_csv=genre_ids_csv if source == "genre" else "",
+                    deck_json=json.dumps(deck, ensure_ascii=False),
+                    cursor_index=0,
+                    updated_at=datetime.utcnow(),
+                )
+                db.session.add(sess)
+            else:
+                sess.active = True
+                sess.source = source
+                sess.media = media if source == "genre" else None
+                sess.genre_ids_csv = genre_ids_csv if source == "genre" else ""
+                sess.deck_json = json.dumps(deck, ensure_ascii=False)
+                sess.cursor_index = 0
+                sess.updated_at = datetime.utcnow()
+            db.session.commit()
+            _sync_swipe_session_cursor(cid)
+            db.session.commit()
+            db.session.refresh(sess)
+            return jsonify(_swipe_session_json(cid, sess))
+        except Exception:
+            current_app.logger.exception("api_swipe_session_start failed")
+            db.session.rollback()
+            return (
+                jsonify(
+                    {
+                        "error": "Não foi possível criar a sessão de swipe. Tenta de novo daqui a pouco.",
+                        "active": False,
+                    }
+                ),
+                500,
+            )
+
     @app.get("/api/swipe/deck")
     def api_swipe_deck():
+        """Compat: monta deck sem sessão (legado). Preferir /api/swipe/session."""
         cid = _couple_id()
-        excluded = {
-            (s.tmdb_id, s.media_type)
-            for s in SwipeItem.query.filter(
-                SwipeItem.couple_id == cid,
-                SwipeItem.state.in_(("matched", "rejected")),
-            ).all()
-        }
+        excluded = _swipe_swiped_out_keys(cid)
         source = (request.args.get("source") or "watchlater").strip().lower()
         token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
-        deck: list[dict] = []
-
-        def _attach_states(cards: list[dict]) -> list[dict]:
-            for card in cards:
-                row = SwipeItem.query.filter_by(
-                    couple_id=cid,
-                    tmdb_id=card["tmdb_id"],
-                    media_type=card["media_type"],
-                ).first()
-                if row:
-                    card["state"] = row.state
-            return cards
 
         if source == "watchlater":
-            for wl in WatchLaterItem.query.order_by(
-                WatchLaterItem.added_at.desc()
-            ).limit(40):
-                key = (wl.tmdb_id, wl.media_type)
-                if key in excluded:
-                    continue
-                deck.append(
-                    {
-                        "tmdb_id": wl.tmdb_id,
-                        "media_type": wl.media_type,
-                        "title": wl.title,
-                        "poster_path": wl.poster_path,
-                        "state": "pending",
-                    }
-                )
-                if len(deck) >= 20:
-                    break
-            return jsonify({"deck": _attach_states(deck)})
+            deck = _build_swipe_watchlater_deck(cid, excluded, 20)
+            return jsonify({"deck": _swipe_attach_card_states(cid, deck)})
 
         if source != "genre":
             return jsonify({"error": "source inválido (watchlater|genre)"}), 400
@@ -4293,52 +4554,13 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         parsed_ids = parsed_ids[:12]
         if not token:
             return jsonify({"deck": [], "message": "TMDB não configurado"})
-
-        collected: dict[tuple[int, str], dict] = {}
-        if parsed_ids:
-            for gid in parsed_ids:
-                for page in (1, 2, 3):
-                    j = _tmdb_json_cached(
-                        f"{TMDB_BASE}/discover/{media}",
-                        {
-                            "language": TMDB_LANG,
-                            "with_genres": str(gid),
-                            "sort_by": "popularity.desc",
-                            "page": page,
-                            "vote_count.gte": 40,
-                        },
-                        ttl=180,
-                        timeout=16.0,
-                        op=f"swipe_discover_{media}_{gid}_p{page}",
-                    )
-                    if not isinstance(j, dict):
-                        continue
-                    for it in (j.get("results") or [])[:20]:
-                        tid = it.get("id")
-                        if not tid:
-                            continue
-                        key = (int(tid), media)
-                        if key in excluded or key in collected:
-                            continue
-                        tit = (
-                            it.get("title") if media == "movie" else it.get("name")
-                        ) or ""
-                        collected[key] = {
-                            "tmdb_id": int(tid),
-                            "media_type": media,
-                            "title": tit,
-                            "poster_path": it.get("poster_path"),
-                            "state": "pending",
-                        }
-                        if len(collected) >= 28:
-                            break
-                    if len(collected) >= 28:
-                        break
-                if len(collected) >= 28:
-                    break
-        deck = list(collected.values())
+        if not parsed_ids:
+            return jsonify({"deck": []})
+        if SOAP_NOVELA_GENRE_ID in parsed_ids:
+            media = "tv"
+        deck = _build_swipe_genre_deck_round_robin(media, parsed_ids, excluded, 20)
         random.shuffle(deck)
-        return jsonify({"deck": _attach_states(deck[:20])})
+        return jsonify({"deck": _swipe_attach_card_states(cid, deck[:20])})
 
     @app.get("/api/swipe/match-cursor")
     def api_swipe_match_cursor():
@@ -4443,6 +4665,8 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                     created_at=datetime.utcnow(),
                 )
             )
+        db.session.commit()
+        _sync_swipe_session_cursor(cid)
         db.session.commit()
         return jsonify({"state": new_state})
 

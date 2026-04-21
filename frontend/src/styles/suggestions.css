@@ -118,6 +118,23 @@
   background:
     linear-gradient(180deg, rgba(129, 140, 248, 0.08) 0%, rgba(14, 16, 26, 0.8) 70%),
     rgba(10, 12, 22, 0.85);
+  /* Dropdown TMDB/Gemini cresce para baixo: não recortar nem perder cliques para .sgx-gemini-actions */
+  overflow: visible;
+}
+
+.sgx-panel--gemini > .sgx-gemini-rows {
+  position: relative;
+  z-index: 6;
+}
+
+.sgx-panel--gemini > .sgx-gemini-actions {
+  position: relative;
+  z-index: 2;
+}
+
+.sgx-panel--gemini > .sgx-gemini-results-wrap {
+  position: relative;
+  z-index: 1;
 }
 
 .sgx-gemini-glow {
@@ -200,13 +217,60 @@
   transform: translateY(-3px);
 }
 
+/* Ativo: cor própria por gênero (multi-seleção — cada chip com o seu tom) */
 .sgx-genre-card.is-active .sgx-genre-spotlight {
-  outline: 2px solid rgba(244, 114, 182, 0.7);
+  outline-width: 2px;
+  outline-style: solid;
   outline-offset: -2px;
-  background:
-    linear-gradient(180deg, rgba(244, 114, 182, 0.2), rgba(244, 114, 182, 0.05)),
-    rgba(20, 22, 32, 0.9);
-  box-shadow: 0 10px 30px -12px rgba(244, 114, 182, 0.55);
+  background: rgba(20, 22, 32, 0.92);
+}
+.sgx-genre-card[data-theme="default"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(168, 85, 247, 0.75);
+  box-shadow: 0 10px 30px -12px rgba(168, 85, 247, 0.45);
+}
+.sgx-genre-card[data-theme="terror"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(220, 38, 38, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(220, 38, 38, 0.5);
+}
+.sgx-genre-card[data-theme="drama"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(245, 158, 11, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(245, 158, 11, 0.45);
+}
+.sgx-genre-card[data-theme="suspense"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(99, 102, 241, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(99, 102, 241, 0.45);
+}
+.sgx-genre-card[data-theme="acao"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(249, 115, 22, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(249, 115, 22, 0.45);
+}
+.sgx-genre-card[data-theme="aventura"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(34, 197, 94, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(34, 197, 94, 0.45);
+}
+.sgx-genre-card[data-theme="animacao"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(34, 211, 238, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(34, 211, 238, 0.45);
+}
+.sgx-genre-card[data-theme="ficcao"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(56, 189, 248, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(56, 189, 248, 0.45);
+}
+.sgx-genre-card[data-theme="policial"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(148, 163, 184, 0.9);
+  box-shadow: 0 10px 30px -12px rgba(71, 85, 105, 0.5);
+}
+.sgx-genre-card[data-theme="comedia"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(250, 204, 21, 0.9);
+  box-shadow: 0 10px 30px -12px rgba(250, 204, 21, 0.45);
+}
+.sgx-genre-card[data-theme="romance"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(244, 114, 182, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(244, 114, 182, 0.5);
+}
+.sgx-genre-card[data-theme="novela"].is-active .sgx-genre-spotlight {
+  outline-color: rgba(192, 132, 252, 0.85);
+  box-shadow: 0 10px 30px -12px rgba(192, 132, 252, 0.45);
 }
 
 .sgx-genre-spotlight {
@@ -331,7 +395,7 @@
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  z-index: 30;
+  z-index: var(--rx-z-autocomplete);
   max-height: 320px;
   overflow: auto;
   background: rgba(12, 14, 24, 0.96);

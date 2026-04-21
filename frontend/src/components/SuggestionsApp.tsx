@@ -21,6 +21,7 @@ import {
   MediaPoster,
   ScrollReveal,
   SegmentedToggle,
+  Sheet,
   ShinyText,
   Skeleton,
   SpotlightCard,
@@ -28,6 +29,7 @@ import {
   TiltCard,
   cx,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 import { apiGet } from "../lib/api";
 import { formatDateBR, mediaTypeLabel, posterUrl } from "../lib/utils";
 import type { SearchHit } from "../lib/types";
@@ -100,6 +102,12 @@ const GENRE_CHIPS: GenreChip[] = [
   { genreId: "", label: "Qualquer gênero", theme: "default", emoji: "🎲" },
 ];
 
+function genreChipKey(chip: GenreChip): string {
+  if (chip.keywordId) return `k:${chip.keywordId}`;
+  if (chip.genreId) return `g:${chip.genreId}`;
+  return "__any__";
+}
+
 const GEMINI_SCOPE_OPTIONS = [
   { value: "mixed" as const, label: "Misto", icon: <Sparkles size={14} /> },
   { value: "movie" as const, label: "Filmes", icon: <Film size={14} /> },
@@ -132,6 +140,19 @@ function useClickOutside<T extends HTMLElement>(ref: React.RefObject<T>, onClose
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
   }, [ref, onClose, active]);
+}
+
+/** Viewport estreito: resultado do sorteio em Sheet em vez de inline. */
+function useNarrowSorteioSheet() {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const fn = () => setNarrow(mq.matches);
+    fn();
+    mq.addEventListener("change", fn);
+    return () => mq.removeEventListener("change", fn);
+  }, []);
+  return narrow;
 }
 
 /* ---------------- Card de resultado ---------------- */
@@ -250,36 +271,76 @@ function ResultSkeleton() {
 /* ---------------- Seção 1: Aleatório por gênero ---------------- */
 
 function RandomByGenreSection() {
+  const narrowSheet = useNarrowSorteioSheet();
   const [media, setMedia] = useState<MediaChoice>("movie");
-  const [activeChip, setActiveChip] = useState<GenreChip>(GENRE_CHIPS[GENRE_CHIPS.length - 1]);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set(["__any__"]));
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SuggestionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    document.body.setAttribute("data-genre-theme", activeChip.theme || "default");
-  }, [activeChip]);
+    if (selectedKeys.has("__any__") || selectedKeys.size === 0) {
+      document.body.setAttribute("data-genre-theme", "default");
+      return;
+    }
+    if (selectedKeys.size === 1) {
+      const k = [...selectedKeys][0];
+      const chip = GENRE_CHIPS.find((c) => genreChipKey(c) === k);
+      document.body.setAttribute("data-genre-theme", chip?.theme || "default");
+    } else {
+      document.body.setAttribute("data-genre-theme", "default");
+    }
+  }, [selectedKeys]);
+
+  const novelaSelected = selectedKeys.has("g:10766");
+  const currentMedia: MediaChoice = novelaSelected ? "tv" : media;
 
   function pickChip(chip: GenreChip) {
-    setActiveChip(chip);
+    const key = genreChipKey(chip);
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (key === "__any__") {
+        return new Set(["__any__"]);
+      }
+      next.delete("__any__");
+      if (chip.keywordId) {
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          next.clear();
+          next.add(key);
+        }
+        return next.size ? next : new Set(["__any__"]);
+      }
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next.size ? next : new Set(["__any__"]);
+    });
     if (chip.genreId === "10766") setMedia("tv");
   }
-
-  const currentMedia: MediaChoice = activeChip.genreId === "10766" ? "tv" : media;
 
   async function fetchRandom() {
     setLoading(true);
     setError(null);
     try {
       const body: Record<string, unknown> = { media_type: currentMedia };
-      if (activeChip.keywordId) {
-        const kid = parseInt(activeChip.keywordId, 10);
+      if (selectedKeys.has("__any__") || selectedKeys.size === 0) {
+        /* só tipo de mídia */
+      } else if ([...selectedKeys].some((k) => k.startsWith("k:"))) {
+        const kidStr = [...selectedKeys].find((k) => k.startsWith("k:"))?.slice(2);
+        const kid = kidStr ? parseInt(kidStr, 10) : NaN;
         if (!isNaN(kid)) body.keyword_id = kid;
-      } else if (activeChip.genreId) {
-        const gid = parseInt(activeChip.genreId, 10);
-        if (!isNaN(gid)) body.genre_id = gid;
+      } else {
+        const ids = [...selectedKeys]
+          .filter((k) => k.startsWith("g:"))
+          .map((k) => parseInt(k.slice(2), 10))
+          .filter((n) => !isNaN(n));
+        if (ids.length) body.genre_ids = ids;
       }
-      const res = await fetch("/suggestions/random", {
+      const res = await fetch(appUrl("/suggestions/random"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(body),
@@ -312,7 +373,7 @@ function RandomByGenreSection() {
             </GradientTitle>
           </h2>
           <p className="sgx-section-sub">
-            Escolha um gênero, a gente sorteia um título do TMDB pra vocês assistirem juntinhos.
+            Escolha um ou vários gêneros (OR no TMDB). A gente sorteia um título pra vocês assistirem juntinhos.
           </p>
         </header>
 
@@ -327,7 +388,7 @@ function RandomByGenreSection() {
 
         <div className="sgx-genre-grid" role="list">
           {GENRE_CHIPS.map((chip) => {
-            const active = chip === activeChip;
+            const active = selectedKeys.has(genreChipKey(chip));
             return (
               <button
                 key={`${chip.genreId || ""}-${chip.keywordId || ""}-${chip.label}`}
@@ -375,10 +436,22 @@ function RandomByGenreSection() {
                 {error}
               </motion.p>
             )}
-            {!loading && !error && result && (
+            {!loading && !error && result && !narrowSheet && (
               <ResultCard key={`rnd-${result.id}`} data={result} onAgain={fetchRandom} />
             )}
           </AnimatePresence>
+          {!loading && !error && result && narrowSheet && (
+            <Sheet
+              open
+              onOpenChange={(o) => {
+                if (!o) setResult(null);
+              }}
+              title="Resultado do sorteio"
+              subtitle="Ver detalhes ou sortear de novo."
+            >
+              <ResultCard data={result} onAgain={fetchRandom} />
+            </Sheet>
+          )}
         </div>
       </SurfacePanel>
     </ScrollReveal>
@@ -388,6 +461,7 @@ function RandomByGenreSection() {
 /* ---------------- Seção 2: Palavras-chave ---------------- */
 
 function KeywordsSection() {
+  const narrowSheet = useNarrowSorteioSheet();
   const [media, setMedia] = useState<MediaChoice>("movie");
   const [query, setQuery] = useState("");
   const debounced = useDebounced(query, 260);
@@ -405,7 +479,7 @@ function KeywordsSection() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/static/data/keyword_presets.json")
+    fetch(appUrl("/static/data/keyword_presets.json"))
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => {
         if (cancelled) return;
@@ -468,7 +542,7 @@ function KeywordsSection() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/suggestions/keywords", {
+      const res = await fetch(appUrl("/suggestions/keywords"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
@@ -645,7 +719,7 @@ function KeywordsSection() {
                 {error}
               </motion.p>
             )}
-            {!loading && !error && result && (
+            {!loading && !error && result && !narrowSheet && (
               <ResultCard
                 key={`kw-${result.id}`}
                 data={result}
@@ -654,6 +728,22 @@ function KeywordsSection() {
               />
             )}
           </AnimatePresence>
+          {!loading && !error && result && narrowSheet && (
+            <Sheet
+              open
+              onOpenChange={(o) => {
+                if (!o) setResult(null);
+              }}
+              title="Resultado do sorteio"
+              subtitle="Ver detalhes ou sortear de novo."
+            >
+              <ResultCard
+                data={result}
+                onAgain={fetchKwSuggest}
+                againLabel="Sortear de novo"
+              />
+            </Sheet>
+          )}
         </div>
       </SurfacePanel>
     </ScrollReveal>
@@ -813,7 +903,7 @@ function GeminiSection() {
     setError(null);
     setResults(null);
     try {
-      const res = await fetch("/suggestions/gemini", {
+      const res = await fetch(appUrl("/suggestions/gemini"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ titles, media_scope: scope }),

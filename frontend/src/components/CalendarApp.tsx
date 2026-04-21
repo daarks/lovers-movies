@@ -8,6 +8,7 @@ import {
   ScrollReveal,
   SurfacePanel,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface DayItem {
   id?: number;
@@ -118,7 +119,7 @@ export default function CalendarApp() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/daily-watch?m=${monthKey(ym.y, ym.m)}`)
+    fetch(appUrl(`/api/daily-watch?m=${monthKey(ym.y, ym.m)}`))
       .then((r) => r.json())
       .then((data: { by_day?: ByDay }) => {
         if (cancelled) return;

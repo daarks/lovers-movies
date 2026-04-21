@@ -11,6 +11,7 @@ import {
   Skeleton,
   Chip,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface CountryTitle {
   tmdb_id: number;
@@ -58,8 +59,8 @@ export default function MapApp() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/map/countries").then((r) => r.json()),
-      fetch("/static/world-countries.svg").then((r) => r.text()),
+      fetch(appUrl("/api/map/countries")).then((r) => r.json()),
+      fetch(appUrl("/static/world-countries.svg")).then((r) => r.text()),
     ])
       .then(([data, svg]) => {
         setCountries(data?.countries || []);

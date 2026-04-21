@@ -11,6 +11,7 @@ import {
   Marquee,
   Chip,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 import type {
   SeasonCurrentPayload,
   SeasonListBlock,
@@ -45,7 +46,7 @@ export default function SeasonApp() {
   const reduce = useReducedMotion();
 
   useEffect(() => {
-    fetch("/api/season/current")
+    fetch(appUrl("/api/season/current"))
       .then((r) => r.json())
       .then((d: SeasonCurrentPayload) => setData(d))
       .catch(() => setData(null))

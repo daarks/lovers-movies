@@ -4,7 +4,7 @@
 {% block nav_swipe %} is-active{% endblock %}
 {% block body %}
 <main class="couple-main">
-  <div id="swipe-root" class="swipe-shell" aria-busy="true">
+  <div id="swipe-root" class="swipe-shell" aria-busy="true" data-api-prefix="{{ (request.script_root or '')|e }}">
     <noscript>
       <section class="swipe-shell-fallback">
         <h1>Modo casal</h1>

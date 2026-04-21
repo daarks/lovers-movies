@@ -7,6 +7,13 @@
 # - monta /etc/movies-app.env a partir de secrets.env na raiz do repo
 # - systemd: serviço movies-app, inicia no boot, reinicia se cair
 #
+# Raspberry Pi Zero 2W (~512 MB RAM): o "npm run build" (Vite) quase sempre
+# estoura memória (FATAL ERROR: JavaScript heap out of memory). Nesse caso:
+#   SKIP_FRONTEND=1 sudo ./install-rpi.sh
+# e no PC (com o mesmo clone), SEM sudo:
+#   ./install-rpi.sh from-host
+# (builda no host, rsync para gabeevi@raspberrypi.local e reinicia o serviço)
+#
 # Uso (único passo necessário após clonar o repositório):
 #   cp secrets.example secrets.env
 #   nano secrets.env   # GEMINI_API_KEY, TMDB_READ_ACCESS_TOKEN, TMDB_API_KEY
@@ -17,10 +24,19 @@
 #   SKIP_FRONTEND=1 sudo ./install-rpi.sh   # pula npm ci && npm run build
 #   SKIP_APT=1 sudo ./install-rpi.sh        # pula apt-get update/install
 #
+# Deploy do frontend a partir do PC (não exige sudo local):
+#   ./install-rpi.sh from-host [--sync-only] [--no-restart]
+#
 # Padrão: 0.0.0.0:8080 (LAN e, com redirecionamento no roteador, internet).
 # Se quiser só local: FLASK_BIND=127.0.0.1:8080 em secrets.env
 #
 set -euo pipefail
+
+_INSTALL_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${1:-}" == "from-host" ]]; then
+  shift
+  exec bash "$_INSTALL_SH_DIR/deploy/from-host-to-pi.sh" "$@"
+fi
 
 RED='\033[0;31m'
 GRN='\033[0;32m'
@@ -33,7 +49,7 @@ warn() { echo -e "${YLW}!${RST} $*"; }
 
 [[ "$(id -u)" -eq 0 ]] || die "Execute com sudo: sudo $0"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$_INSTALL_SH_DIR"
 APP_DIR="${1:-$REPO_ROOT/app}"
 DEPLOY_DIR="$REPO_ROOT/deploy"
 FRONTEND_DIR="$REPO_ROOT/frontend"
@@ -144,6 +160,15 @@ chmod +x "$DEPLOY_DIR/start-gunicorn.sh"
 # -------------------------------------------------------------------
 # 4) Build do frontend (React/Vite → app/static/build/)
 # -------------------------------------------------------------------
+if [[ "$SKIP_FRONTEND" != "1" ]] && [[ -r /proc/meminfo ]]; then
+  _mem_mb="$(awk '/MemTotal:/ {print int($2/1024)}' /proc/meminfo)"
+  if [[ "${_mem_mb:-99999}" -lt 900 ]]; then
+    warn "RAM total ~${_mem_mb} MB: o build Node (Vite) costuma falhar com \"heap out of memory\" neste hardware."
+    warn "Use na Pi: SKIP_FRONTEND=1 sudo $0"
+    warn "No PC: ./install-rpi.sh from-host   (ver deploy/from-host-to-pi.sh)"
+  fi
+fi
+
 if [[ "$SKIP_FRONTEND" == "1" ]]; then
   warn "Pulando build do frontend (SKIP_FRONTEND=1 ou Node indisponível)."
   if [[ ! -f "$APP_DIR/static/build/manifest.json" ]]; then
@@ -207,5 +232,7 @@ echo ""
 echo "Comandos úteis:"
 echo "  sudo systemctl status movies-app"
 echo "  sudo journalctl -u movies-app -f"
-echo "  # Rebuild só do frontend (sem mexer no serviço):"
+echo "  # Rebuild só do frontend (na própria máquina, com RAM suficiente):"
 echo "  cd $FRONTEND_DIR && npm run build && sudo systemctl restart movies-app"
+echo "  # Pi fraca (ex. Zero 2W): build no PC e enviar por SSH —"
+echo "  ./install-rpi.sh from-host"

@@ -31,6 +31,7 @@ import {
   useToast,
   cx,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 import { apiGet } from "../lib/api";
 import type { DetailsPayload, DetailsRecommendation } from "../lib/types";
 import { formatDateBR } from "../lib/utils";
@@ -125,7 +126,7 @@ function DetailsInner({ mediaType, tmdbId }: DetailsAppProps) {
       if (data.watch_later) {
         const form = new FormData();
         form.append("return_to", "details");
-        const res = await fetch(`/watch-later/remove/${data.watch_later.id}`, {
+        const res = await fetch(appUrl(`/watch-later/remove/${data.watch_later.id}`), {
           method: "POST",
           body: form,
           headers: { "X-Requested-With": "fetch" },
@@ -145,7 +146,7 @@ function DetailsInner({ mediaType, tmdbId }: DetailsAppProps) {
         form.append("release_date", data.release_date);
         form.append("genres", data.genres.join(", "));
         form.append("vote_average", data.vote_average != null ? String(data.vote_average) : "");
-        const res = await fetch("/watch-later/add", {
+        const res = await fetch(appUrl("/watch-later/add"), {
           method: "POST",
           body: form,
           headers: { "X-Requested-With": "fetch" },

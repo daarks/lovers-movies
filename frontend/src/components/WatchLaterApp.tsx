@@ -14,6 +14,7 @@ import {
   SurfacePanel,
   cx,
 } from "../ds";
+import { appUrl } from "../lib/appBase";
 import { apiGet } from "../lib/api";
 import { GENRE_CHIPS, genresMatchFilter } from "../lib/genreMatch";
 import { mediaTypeLabel } from "../lib/utils";
@@ -151,7 +152,7 @@ export default function WatchLaterApp() {
   async function removeItem(item: WatchLaterItem) {
     if (!confirm(`Remover "${item.title}" da fila de ver depois?`)) return;
     try {
-      const res = await fetch(`/watch-later/remove/${item.id}`, {
+      const res = await fetch(appUrl(`/watch-later/remove/${item.id}`), {
         method: "POST",
         headers: { Accept: "application/json" },
       });

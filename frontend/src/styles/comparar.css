@@ -97,8 +97,9 @@
   color: var(--rx-text);
 }
 
-/* Popover / dropdown resultados */
+/* Popover / dropdown resultados — acima da bottom-nav (90) */
 .cmp-popup {
+  z-index: var(--rx-z-autocomplete);
   width: var(--popover-anchor-width, 100vw);
   max-width: min(560px, calc(100vw - 2rem));
   max-height: min(60vh, 420px);
@@ -428,7 +429,7 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(6px);
-  z-index: 80;
+  z-index: var(--rx-z-modal);
   animation: cmpFade 180ms var(--rx-ease);
 }
 
@@ -452,7 +453,7 @@
   border-radius: var(--rx-radius);
   box-shadow: var(--rx-shadow-lg);
   padding: 1.25rem;
-  z-index: 81;
+  z-index: calc(var(--rx-z-modal) + 1);
   color: var(--rx-text);
   animation: cmpPopIn 200ms var(--rx-ease);
 }

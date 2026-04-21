@@ -112,6 +112,16 @@ export default function HistoryApp() {
     rootRef.current?.removeAttribute("aria-busy");
   }, []);
 
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const m = p.get("media");
+      if (m === "movie" || m === "tv") setMedia(m);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const filtered = useMemo(() => {
     if (!items) return [];
     const q = debounced.trim().toLowerCase();

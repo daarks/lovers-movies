@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { ArrowLeft, Trophy, Target, Handshake, XCircle, CheckCircle2 } from "lucide-react";
 import { GradientTitle, NumberTicker, ScrollReveal, SurfacePanel, EmptyState, Skeleton } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface HeroInfo {
   title: string;
@@ -63,7 +64,7 @@ export default function BetDetailApp() {
 
   useEffect(() => {
     if (!ctx) return;
-    fetch(`/api/bets/detail/${ctx.mt}/${ctx.id}`)
+    fetch(appUrl(`/api/bets/detail/${ctx.mt}/${ctx.id}`))
       .then(async (r) => {
         if (!r.ok) throw new Error("not found");
         return r.json();

@@ -234,10 +234,11 @@ export default function HomeApp() {
     }
   }, [feed, error]);
 
-  const heroText = useMemo(
-    () => feed?.hero_message ?? "O que vamos ver hoje baby?",
-    [feed?.hero_message]
-  );
+  const heroText = useMemo(() => {
+    const base = (feed?.hero_message ?? "O que vamos ver hoje baby?").trim();
+    if (base.includes("❤")) return base;
+    return `${base} ❤️`;
+  }, [feed?.hero_message]);
 
   function onPick(hit: SearchHit) {
     window.location.href = `/details/${hit.media_type}/${hit.id}`;

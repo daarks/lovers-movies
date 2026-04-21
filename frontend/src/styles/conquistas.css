@@ -80,7 +80,7 @@
 
 .cq-title {
   margin: 0;
-  font-family: "DM Serif Display", Georgia, serif;
+  font-family: var(--rx-font-display);
   font-size: 1.55rem;
   color: var(--rx-text);
 }
@@ -217,10 +217,38 @@
   background: radial-gradient(circle at top right, rgba(250, 204, 21, 0.12), transparent 60%);
 }
 
-.cq-card--legendary { border-color: rgba(250, 204, 21, 0.6); }
-.cq-card--epic { border-color: rgba(168, 85, 247, 0.6); }
-.cq-card--rare { border-color: rgba(56, 189, 248, 0.55); }
-.cq-card--seasonal { border-color: rgba(34, 197, 94, 0.55); }
+/* Raridade: Comum verde, Raro azul, Épico roxo, Lendário laranja, Sazonal verde menta */
+.cq-card--common { border-color: rgba(34, 197, 94, 0.55); }
+.cq-card--rare { border-color: rgba(59, 130, 246, 0.6); }
+.cq-card--epic { border-color: rgba(168, 85, 247, 0.65); }
+.cq-card--legendary { border-color: rgba(249, 115, 22, 0.65); }
+.cq-card--seasonal { border-color: rgba(45, 212, 191, 0.55); }
+
+.cq-card-tags .rx-chip--common {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+}
+.cq-card-tags .rx-chip--rare {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+}
+.cq-card-tags .rx-chip--epic {
+  border-color: rgba(168, 85, 247, 0.5);
+  background: rgba(168, 85, 247, 0.14);
+  color: #d8b4fe;
+}
+.cq-card-tags .rx-chip--legendary {
+  border-color: rgba(249, 115, 22, 0.5);
+  background: rgba(249, 115, 22, 0.14);
+  color: #fdba74;
+}
+.cq-card-tags .rx-chip--seasonal {
+  border-color: rgba(45, 212, 191, 0.45);
+  background: rgba(45, 212, 191, 0.12);
+  color: #5eead4;
+}
 
 .cq-card-head {
   display: flex;

@@ -12,14 +12,12 @@
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preconnect" href="https://api.fontshare.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
-  <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@400,500,700,800&f[]=general-sans@400,500,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Nunito:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {{ vite_entry_tags('chrome') }}
   {% block head_extra %}{% endblock %}
 </head>
-<body class="has-bottom-nav {% block body_class %}{% endblock %}" data-genre-theme="{{ data_genre_theme|default('default') }}" data-profile-label-a="{{ profile_label_a|e }}" data-profile-label-b="{{ profile_label_b|e }}">
+<body class="has-bottom-nav {% block body_class %}{% endblock %}" data-app-base="{{ (request.script_root or '')|e }}" data-genre-theme="{{ data_genre_theme|default('default') }}" data-profile-label-a="{{ profile_label_a|e }}" data-profile-label-b="{{ profile_label_b|e }}">
   <div id="app-toast-host" class="app-toast-host" aria-live="polite"></div>
 
   <div id="nav-drawer-backdrop" class="nav-drawer-backdrop" aria-hidden="true"></div>

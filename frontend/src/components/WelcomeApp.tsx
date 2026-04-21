@@ -55,7 +55,7 @@ export default function WelcomeApp({ labelA, labelB }: WelcomeAppProps) {
             <ProfileButton
               slug="a"
               label={labelA}
-              emoji="🌸"
+              emoji="🙄"
               color="rose"
               active={pick === "a"}
               disabled={pick !== null}
@@ -73,7 +73,7 @@ export default function WelcomeApp({ labelA, labelB }: WelcomeAppProps) {
             <ProfileButton
               slug="b"
               label={labelB}
-              emoji="🎬"
+              emoji="🤔"
               color="violet"
               active={pick === "b"}
               disabled={pick !== null}
