@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import uuid
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -25,7 +26,7 @@ from flask import (
 )
 from markupsafe import Markup
 from flask_caching import Cache
-from sqlalchemy import desc, inspect, text
+from sqlalchemy import and_, desc, inspect, or_, text
 
 from models import (
     AchievementProgress,
@@ -326,6 +327,20 @@ def _ensure_phase2_schema():
                         "ALTER TABLE watched_items ADD COLUMN tmdb_snapshot_json TEXT"
                     )
                 )
+    except Exception:
+        pass
+
+
+def _ensure_swipe_session_public_id():
+    """Coluna public_id em swipe_sessions (SQLite)."""
+    try:
+        insp = inspect(db.engine)
+        if "swipe_sessions" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("swipe_sessions")}
+        if "public_id" not in cols:
+            with db.engine.begin() as conn:
+                conn.execute(text("ALTER TABLE swipe_sessions ADD COLUMN public_id VARCHAR(40)"))
     except Exception:
         pass
 
@@ -999,6 +1014,7 @@ def create_app() -> Flask:
         _ensure_phase1_seed()
         _ensure_profile_display_names()
         _ensure_phase2_schema()
+        _ensure_swipe_session_public_id()
 
     @app.before_request
     def _req_timer_start():
@@ -4259,15 +4275,69 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             ).all()
         }
 
+    def _swipe_filter_deck_for_profile(deck: list[dict], profile: str) -> list[dict]:
+        """Cada perfil vê só cartas em que ainda pode agir (evita ficar preso após o próprio like)."""
+        if profile not in ("a", "b"):
+            profile = "a"
+        out: list[dict] = []
+        for c in deck:
+            st = str(c.get("state") or "pending").lower()
+            if st in ("matched", "rejected"):
+                continue
+            if st == "pending":
+                out.append(c)
+            elif st == "liked_a":
+                if profile == "b":
+                    out.append(c)
+            elif st == "liked_b":
+                if profile == "a":
+                    out.append(c)
+            else:
+                out.append(c)
+        return out
+
     def _swipe_attach_card_states(swipe_cid: int, cards: list[dict]) -> list[dict]:
+        """Uma query em lote em vez de N SELECTs (deck grande)."""
+        if not cards:
+            return cards
+        keys: list[tuple[int, str]] = []
+        seen: set[tuple[int, str]] = set()
         for card in cards:
-            row = SwipeItem.query.filter_by(
-                couple_id=swipe_cid,
-                tmdb_id=card["tmdb_id"],
-                media_type=card["media_type"],
-            ).first()
-            if row:
-                card["state"] = row.state
+            try:
+                tid = int(card["tmdb_id"])
+            except (TypeError, ValueError, KeyError):
+                card.setdefault("state", "pending")
+                continue
+            mt = str(card.get("media_type") or "")
+            k = (tid, mt)
+            if k in seen:
+                continue
+            seen.add(k)
+            keys.append(k)
+        if not keys:
+            for card in cards:
+                card.setdefault("state", "pending")
+            return cards
+        conds = [
+            and_(
+                SwipeItem.couple_id == swipe_cid,
+                SwipeItem.tmdb_id == tid,
+                SwipeItem.media_type == mt,
+            )
+            for tid, mt in keys
+        ]
+        rows = SwipeItem.query.filter(or_(*conds)).all() if conds else []
+        mp = {(int(r.tmdb_id), str(r.media_type)): r.state for r in rows}
+        for card in cards:
+            try:
+                tid = int(card["tmdb_id"])
+            except (TypeError, ValueError, KeyError):
+                card.setdefault("state", "pending")
+                continue
+            mt = str(card.get("media_type") or "")
+            st = mp.get((tid, mt))
+            if st:
+                card["state"] = st
             else:
                 card.setdefault("state", "pending")
         return cards
@@ -4404,7 +4474,9 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         sess.cursor_index = i
         sess.updated_at = datetime.utcnow()
 
-    def _swipe_session_json(swipe_cid: int, sess: SwipeSession) -> dict:
+    def _swipe_session_json(
+        swipe_cid: int, sess: SwipeSession, viewer_profile: str | None = None
+    ) -> dict:
         try:
             deck_full = json.loads(sess.deck_json or "[]")
         except (TypeError, json.JSONDecodeError):
@@ -4420,27 +4492,70 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 p = p.strip()
                 if p.isdigit():
                     gids.append(int(p))
+        prof = (viewer_profile or "").strip().lower()
+        if prof not in ("a", "b"):
+            prof = "a"
+        filtered = _swipe_filter_deck_for_profile(visible, prof)
+        has_tail = cur < len(deck_full)
+        session_waiting = bool(has_tail and not filtered and visible)
         return {
             "active": True,
             "source": sess.source,
             "media": sess.media,
             "genre_ids": gids,
-            "deck": visible,
+            "deck": filtered,
             "cursor_index": cur,
             "deck_total": len(deck_full),
+            "session_public_id": getattr(sess, "public_id", None) or "",
+            "viewer_profile": prof,
+            "session_has_tail": has_tail,
+            "session_waiting": session_waiting,
         }
 
     @app.get("/casal")
     def couple_swipe_page():
         return render_template("couple_swipe.html")
 
+    def _swipe_viewer_profile() -> str:
+        p = (request.args.get("profile") or "").strip().lower()
+        if p not in ("a", "b"):
+            p = "a"
+        return p
+
+    @app.get("/api/swipe/sessions")
+    def api_swipe_sessions_list():
+        """Lista sessões ativas do casal (hoje: no máx. uma linha por casal)."""
+        cid = _couple_id()
+        prof = _swipe_viewer_profile()
+        sess = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
+        if not sess:
+            return jsonify({"items": []})
+        payload = _swipe_session_json(cid, sess, prof)
+        return jsonify(
+            {
+                "items": [
+                    {
+                        "public_id": payload.get("session_public_id") or "",
+                        "active": True,
+                        "source": sess.source,
+                        "media": sess.media,
+                        "genre_ids": payload.get("genre_ids") or [],
+                        "deck_count": len(payload.get("deck") or []),
+                        "session_waiting": payload.get("session_waiting"),
+                        "deck_total": payload.get("deck_total"),
+                    }
+                ]
+            }
+        )
+
     @app.get("/api/swipe/session")
     def api_swipe_session_get():
         cid = _couple_id()
+        prof = _swipe_viewer_profile()
         sess = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
         if not sess:
             return jsonify({"active": False})
-        return jsonify(_swipe_session_json(cid, sess))
+        return jsonify(_swipe_session_json(cid, sess, prof))
 
     @app.post("/api/swipe/session/end")
     def api_swipe_session_end():
@@ -4486,6 +4601,7 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                     media, parsed_ids, excluded, 100
                 )
             sess = SwipeSession.query.filter_by(couple_id=cid).first()
+            new_public = str(uuid.uuid4())
             if not sess:
                 sess = SwipeSession(
                     couple_id=cid,
@@ -4495,6 +4611,7 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                     genre_ids_csv=genre_ids_csv if source == "genre" else "",
                     deck_json=json.dumps(deck, ensure_ascii=False),
                     cursor_index=0,
+                    public_id=new_public,
                     updated_at=datetime.utcnow(),
                 )
                 db.session.add(sess)
@@ -4505,12 +4622,16 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 sess.genre_ids_csv = genre_ids_csv if source == "genre" else ""
                 sess.deck_json = json.dumps(deck, ensure_ascii=False)
                 sess.cursor_index = 0
+                sess.public_id = new_public
                 sess.updated_at = datetime.utcnow()
+            viewer = (body.get("viewer") or "").strip().lower()
+            if viewer not in ("a", "b"):
+                viewer = "a"
             db.session.commit()
             _sync_swipe_session_cursor(cid)
             db.session.commit()
             db.session.refresh(sess)
-            return jsonify(_swipe_session_json(cid, sess))
+            return jsonify(_swipe_session_json(cid, sess, viewer))
         except Exception:
             current_app.logger.exception("api_swipe_session_start failed")
             db.session.rollback()

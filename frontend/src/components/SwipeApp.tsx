@@ -33,6 +33,10 @@ interface SessionPayload {
   cursor_index?: number;
   deck_total?: number;
   error?: string;
+  session_public_id?: string;
+  session_has_tail?: boolean;
+  session_waiting?: boolean;
+  viewer_profile?: string;
 }
 
 type MediaType = "movie" | "tv";
@@ -101,6 +105,11 @@ function activeProfile(): "a" | "b" {
   }
 }
 
+function swipeSessionUrl(): string {
+  const p = activeProfile();
+  return appUrl(`/api/swipe/session?profile=${encodeURIComponent(p)}`);
+}
+
 function haptic(pattern: number | number[] = 15) {
   try {
     if (navigator.vibrate) navigator.vibrate(pattern);
@@ -125,6 +134,8 @@ function SwipeDeck() {
   const legacySwipeRef = useRef(false);
   const [gate, setGate] = useState<GateStep>("pick");
   const [pendingSession, setPendingSession] = useState<SessionPayload | null>(null);
+  /** Sessão ativa mas fila deste perfil vazia (ex.: outro já curtiu — à espera da resposta). */
+  const [sessionWaitOnly, setSessionWaitOnly] = useState(false);
 
   useEffect(() => {
     if (gate !== "newGenre") {
@@ -149,13 +160,26 @@ function SwipeDeck() {
       return true;
     }
     try {
-      const r = await fetch(appUrl("/api/swipe/session"));
+      const r = await fetch(swipeSessionUrl());
       const d = (await r.json()) as SessionPayload;
       if (d.active) {
-        setDeck(d.deck || []);
-        setIdx(0);
+        const next = d.deck || [];
+        if (next.length) {
+          setSessionWaitOnly(false);
+          setDeck(next);
+          setIdx(0);
+        } else if (d.session_waiting) {
+          setSessionWaitOnly(true);
+          setDeck([]);
+          setIdx(0);
+        } else {
+          setSessionWaitOnly(false);
+          setDeck([]);
+          setIdx(0);
+        }
         return true;
       }
+      setSessionWaitOnly(false);
       setDeck([]);
       setIdx(0);
       return false;
@@ -179,6 +203,7 @@ function SwipeDeck() {
     setIdx(0);
     setGate(null);
     setPendingSession(null);
+    setSessionWaitOnly(false);
     if (body.source === "genre") setSource("genre");
     if (body.source === "watchlater") setSource("watchlater");
   }, []);
@@ -190,7 +215,7 @@ function SwipeDeck() {
         const r = await fetch(appUrl("/api/swipe/session"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ ...body, viewer: activeProfile() }),
         });
         const text = await r.text();
         let d: SessionPayload = {};
@@ -227,7 +252,18 @@ function SwipeDeck() {
           return false;
         }
         legacySwipeRef.current = false;
-        applyStartedSession(d, body);
+        if (d.session_waiting && !(d.deck?.length ?? 0)) {
+          setSessionWaitOnly(true);
+          setDeck([]);
+          setIdx(0);
+          setGate(null);
+          setPendingSession(null);
+          if (d.source === "genre") setSource("genre");
+          if (d.source === "watchlater") setSource("watchlater");
+        } else {
+          setSessionWaitOnly(false);
+          applyStartedSession(d, body);
+        }
         return true;
       } catch {
         toast({
@@ -247,11 +283,13 @@ function SwipeDeck() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(appUrl("/api/swipe/session"))
+    fetch(swipeSessionUrl())
       .then((r) => r.json())
       .then((d: SessionPayload) => {
         if (cancelled) return;
-        const canResume = Boolean(d.active && (d.deck?.length ?? 0) > 0);
+        const canResume = Boolean(
+          d.active && ((d.deck?.length ?? 0) > 0 || Boolean(d.session_waiting))
+        );
         setPendingSession(canResume ? d : null);
         setDeck([]);
         setIdx(0);
@@ -273,8 +311,35 @@ function SwipeDeck() {
     };
   }, []);
 
+  useEffect(() => {
+    if (gate !== "pick") return undefined;
+    const tick = () => {
+      fetch(swipeSessionUrl())
+        .then((r) => r.json())
+        .then((d: SessionPayload) => {
+          const canResume = Boolean(
+            d.active && ((d.deck?.length ?? 0) > 0 || Boolean(d.session_waiting))
+          );
+          setPendingSession(canResume ? d : null);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const id = window.setInterval(tick, 2500);
+    return () => clearInterval(id);
+  }, [gate]);
+
+  useEffect(() => {
+    if (!sessionWaitOnly || legacySwipeRef.current) return undefined;
+    const id = window.setInterval(() => {
+      void refreshSessionDeck();
+    }, 2800);
+    return () => clearInterval(id);
+  }, [sessionWaitOnly, refreshSessionDeck]);
+
   const endSession = useCallback(async () => {
     legacySwipeRef.current = false;
+    setSessionWaitOnly(false);
     try {
       await fetch(appUrl("/api/swipe/session/end"), { method: "POST" });
     } catch {
@@ -286,14 +351,39 @@ function SwipeDeck() {
     setGate("pick");
   }, []);
 
-  const continueSession = useCallback(() => {
-    if (pendingSession?.deck?.length) {
-      setDeck(pendingSession.deck as DeckCard[]);
-      setIdx(0);
+  const continueSession = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(swipeSessionUrl());
+      const d = (await r.json()) as SessionPayload;
+      if (!d.active) {
+        toast({ title: "Já não há sessão ativa", kind: "error" });
+        setPendingSession(null);
+        return;
+      }
+      if (d.session_waiting && !(d.deck?.length ?? 0)) {
+        setSessionWaitOnly(true);
+        setDeck([]);
+        setIdx(0);
+        setGate(null);
+        setPendingSession(null);
+        return;
+      }
+      if ((d.deck?.length ?? 0) > 0) {
+        setSessionWaitOnly(false);
+        setDeck(d.deck as DeckCard[]);
+        setIdx(0);
+        setGate(null);
+        setPendingSession(null);
+        return;
+      }
+      toast({ title: "Nada para mostrar neste perfil", kind: "info" });
+    } catch {
+      toast({ title: "Erro ao entrar na sessão", kind: "error" });
+    } finally {
+      setLoading(false);
     }
-    setGate(null);
-    setPendingSession(null);
-  }, [pendingSession]);
+  }, [toast]);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -397,7 +487,8 @@ function SwipeDeck() {
     if (ok) setSelectedGenreKeys(new Set());
   }
 
-  const atEnd = !loading && (deck.length === 0 || idx >= deck.length);
+  const atEnd =
+    !loading && !sessionWaitOnly && (deck.length === 0 || idx >= deck.length);
 
   async function onIniciarNovaSessao() {
     await endSession();
@@ -406,28 +497,42 @@ function SwipeDeck() {
   }
 
   if (gate === "pick") {
-    const left =
-      pendingSession != null
-        ? Math.max(0, (pendingSession.deck_total ?? 0) - (pendingSession.cursor_index ?? 0))
-        : 0;
-    const canContinue = Boolean(pendingSession?.deck && pendingSession.deck.length > 0);
+    const myQueue = pendingSession?.deck?.length ?? 0;
+    const total = pendingSession?.deck_total ?? 0;
+    const sid = (pendingSession?.session_public_id || "").trim();
+    const sidShort = sid.length >= 8 ? `${sid.slice(0, 8)}…` : sid;
+    const canContinue = Boolean(
+      pendingSession?.active &&
+      (myQueue > 0 || Boolean(pendingSession.session_waiting))
+    );
+    const sessionHint = !pendingSession?.active
+      ? " Ainda não há sessão ativa: usa “Iniciar nova sessão”."
+      : pendingSession.session_waiting
+        ? " Há uma sessão em curso; neste perfil estás à espera da resposta do outro nas cartas atuais — podes entrar na mesma sala."
+        : myQueue > 0
+          ? ` Há sessão ativa: ${myQueue} título(s) na tua fila${total ? ` (de ~${total} no deck)` : ""}.`
+          : " Há sessão ativa mas sem cartas visíveis para este perfil.";
     return (
       <div className="swipe-root">
         <ScrollReveal>
           <SurfacePanel className="swipe-session-gate" variant="plate" aura>
             <span className="swipe-eyebrow"><Users size={14} /> Sessão do swipe</span>
             <h2 className="swipe-gate-title">Sessão partilhada</h2>
+            {sid ? (
+              <p className="swipe-hero-sub swipe-session-id-line">
+                <strong>Sessão</strong> <code className="swipe-session-code">{sidShort}</code>
+                {" — id único desta rodada (novo a cada “Iniciar nova sessão”)."}
+              </p>
+            ) : null}
             <p className="swipe-hero-sub">
               O mesmo deck para os <strong>dois perfis</strong> e para qualquer telemóvel — assim os matches batem certo.
-              {canContinue && left > 0
-                ? ` Há uma sessão ativa com cerca de ${left} título(s) por ver.`
-                : " Ainda não há sessão para continuar: usa “Iniciar nova sessão”."}
+              {sessionHint}
             </p>
             <div className="swipe-gate-actions swipe-gate-actions--three">
               <MagneticButton variant="primary" onClick={() => void onIniciarNovaSessao()}>
                 <Sparkles size={16} /> Iniciar nova sessão
               </MagneticButton>
-              <MagneticButton variant="glass" disabled={!canContinue} onClick={continueSession}>
+              <MagneticButton variant="glass" disabled={!canContinue} onClick={() => void continueSession()}>
                 <Heart size={16} /> Entrar na sessão atual
               </MagneticButton>
               <MagneticButton variant="ghost" onClick={() => void endSession()}>
@@ -576,7 +681,7 @@ function SwipeDeck() {
         <MagneticButton variant="glass" size="sm" onClick={() => setGate("pick")}>
           <Users size={14} /> Sessão
         </MagneticButton>
-        {deck.length > 0 ? (
+        {deck.length > 0 || sessionWaitOnly ? (
           <button type="button" className="swipe-filter-btn swipe-filter-btn--danger" onClick={() => void endSession()}>
             Encerrar sessão
           </button>
@@ -588,6 +693,16 @@ function SwipeDeck() {
           <div className="swipe-skeleton">
             <Skeleton width="100%" height="100%" rounded="lg" />
           </div>
+        ) : sessionWaitOnly ? (
+          <EmptyState
+            title="À espera do outro perfil"
+            description="Há cartas em curso nesta sessão; o teu perfil já respondeu ou ainda não é a tua vez. Atualizamos automaticamente — ou abre “Sessão” e volta."
+            action={
+              <MagneticButton variant="primary" onClick={() => void refreshSessionDeck()}>
+                <ListFilter size={16} /> Atualizar agora
+              </MagneticButton>
+            }
+          />
         ) : atEnd ? (
           <EmptyState
             title="Fim do deck por agora"

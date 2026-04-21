@@ -139,6 +139,8 @@ class SwipeSession(db.Model):
     genre_ids_csv = db.Column(db.String(256))
     deck_json = db.Column(db.Text, nullable=False, default="[]")
     cursor_index = db.Column(db.Integer, nullable=False, default=0)
+    # Identificador estável desta “rodada” de sessão (partilhável / lista no UI).
+    public_id = db.Column(db.String(40), nullable=True, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
 
