@@ -156,6 +156,20 @@ export default function TechnicalApp({ mediaType, tmdbId }: Props) {
       .finally(() => setLoading(false));
   }, [mediaType, tmdbId]);
 
+  useEffect(() => {
+    if (!data?.title) return;
+    fetch(appUrl("/api/activity/watching"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tmdb_id: data.tmdb_id,
+        media_type: data.media_type,
+        title: data.title,
+      }),
+    }).catch(() => {});
+  }, [data]);
+
   if (loading) {
     return (
       <div className="tech-root">

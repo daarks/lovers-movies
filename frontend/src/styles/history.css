@@ -387,7 +387,8 @@
 /* ---------- Shell fallback ---------- */
 
 .history-shell-fallback,
-.watch-later-shell-fallback {
+.watch-later-shell-fallback,
+.listas-shell-fallback {
   min-height: 260px;
   display: flex;
   align-items: center;

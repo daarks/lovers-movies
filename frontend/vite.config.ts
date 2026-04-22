@@ -41,7 +41,7 @@ export default defineConfig(({ mode }) => {
         details: resolve(__dirname, "src/entries/details.tsx"),
         suggestions: resolve(__dirname, "src/entries/suggestions.tsx"),
         history: resolve(__dirname, "src/entries/history.tsx"),
-        watchLater: resolve(__dirname, "src/entries/watch_later.tsx"),
+        listas: resolve(__dirname, "src/entries/listas.tsx"),
         calendar: resolve(__dirname, "src/entries/calendar.tsx"),
         stats: resolve(__dirname, "src/entries/stats.tsx"),
         swipe: resolve(__dirname, "src/entries/swipe.tsx"),

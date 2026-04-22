@@ -27,6 +27,9 @@
 # Deploy do frontend a partir do PC (não exige sudo local):
 #   ./install-rpi.sh from-host [--sync-only] [--no-restart]
 #
+# Só no PC: compilar e subir Gunicorn (sem systemd):
+#   ./deploy/local-host-up.sh
+#
 # Padrão: 0.0.0.0:8080 (LAN e, com redirecionamento no roteador, internet).
 # Se quiser só local: FLASK_BIND=127.0.0.1:8080 em secrets.env
 #
@@ -165,7 +168,8 @@ if [[ "$SKIP_FRONTEND" != "1" ]] && [[ -r /proc/meminfo ]]; then
   if [[ "${_mem_mb:-99999}" -lt 900 ]]; then
     warn "RAM total ~${_mem_mb} MB: o build Node (Vite) costuma falhar com \"heap out of memory\" neste hardware."
     warn "Use na Pi: SKIP_FRONTEND=1 sudo $0"
-    warn "No PC: ./install-rpi.sh from-host   (ver deploy/from-host-to-pi.sh)"
+    warn "No PC (Linux/macOS): ./install-rpi.sh from-host   (deploy/from-host-to-pi.sh)"
+    warn "No Windows: PowerShell .\\deploy\\from-host-to-pi.ps1 (instala na Pi + frontend)"
   fi
 fi
 

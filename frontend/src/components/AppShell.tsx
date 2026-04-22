@@ -1,7 +1,8 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { ToastProvider, useToast } from "../ds/Toast";
+import { appUrl } from "../lib/appBase";
 
 /**
  * Magnetic indicator that follows the active bottom-nav link, with spring transition.
@@ -144,6 +145,106 @@ function ToastBridge() {
   return null;
 }
 
+/** SSE do casal: match fora da página de swipe e evento "assistindo". */
+function CoupleEventStreamBridge() {
+  const { toast } = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  useEffect(() => {
+    const path = ((typeof window !== "undefined" && window.location.pathname) || "").replace(/\/$/, "") || "/";
+    if (path === "/bem-vindo") return undefined;
+    // Na página de swipe já existe EventSource da sessão; um segundo SSE no mesmo host
+    // pode saturar o worker monothread do Flask dev ou apertar threads do Gunicorn.
+    if (path === "/casal") return undefined;
+
+    const stored = (localStorage.getItem("movies_app_active_profile_slug") || "a").toLowerCase();
+    const profile = stored === "b" ? "b" : "a";
+    let es: EventSource | null = null;
+    let cancelled = false;
+    let attempt = 0;
+    let timer: number | null = null;
+
+    const labelA = () => document.body.getAttribute("data-profile-label-a") || "A";
+    const labelB = () => document.body.getAttribute("data-profile-label-b") || "B";
+
+    const showMatchToast = (title: string) => {
+      const p = (window.location.pathname || "").replace(/\/$/, "") || "/";
+      if (p === "/casal") return;
+      toastRef.current({
+        title: `Match! Vocês dois querem assistir ${title || "…"}`,
+        kind: "success",
+      });
+    };
+
+    const showWatchingToast = (slug: string, title: string) => {
+      const name = slug === "b" ? labelB() : labelA();
+      window.dispatchEvent(
+        new CustomEvent("app:toast", {
+          detail: {
+            title: `${name} começou a assistir ${title}`,
+            description: "Era pra ser juntos? 👀",
+            kind: "info",
+          },
+        })
+      );
+    };
+
+    const clearTimer = () => {
+      if (timer != null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const open = () => {
+      if (cancelled) return;
+      clearTimer();
+      const url = appUrl(`/api/couple/stream?profile=${encodeURIComponent(profile)}`);
+      es = new EventSource(url);
+      es.onopen = () => {
+        attempt = 0;
+      };
+      es.onmessage = (e) => {
+        try {
+          const j = JSON.parse(e.data) as { type?: string; title?: string; profile?: string };
+          if (j.type === "match") showMatchToast(String(j.title || ""));
+          if (j.type === "watching") {
+            showWatchingToast(String(j.profile || "a").toLowerCase(), String(j.title || ""));
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+      es.onerror = () => {
+        try {
+          es?.close();
+        } catch {
+          /* ignore */
+        }
+        es = null;
+        if (cancelled) return;
+        attempt += 1;
+        const delayMs = Math.min(30000, 1000 * 2 ** Math.min(attempt - 1, 5));
+        timer = window.setTimeout(open, delayMs);
+      };
+    };
+
+    open();
+    return () => {
+      cancelled = true;
+      clearTimer();
+      try {
+        es?.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
+  return null;
+}
+
 export default function AppShell() {
   const reduce = useReducedMotion();
   const mountsReady = useMemo(() => typeof document !== "undefined", []);
@@ -155,6 +256,7 @@ export default function AppShell() {
       <BottomNavIndicator />
       <DrawerEnhancer />
       <ToastBridge />
+      <CoupleEventStreamBridge />
       <AnimatePresence>
         {reduce ? null : (
           <motion.span

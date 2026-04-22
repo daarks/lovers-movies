@@ -8,8 +8,8 @@
 #   ./install-rpi.sh from-host
 #
 # Variáveis (opcionais):
-#   MOVIES_APP_SSH          destino SSH (padrão: gabeevi@raspberrypi.local)
-#   MOVIES_APP_REMOTE_DIR   raiz do repositório NA PI (padrão: \$HOME/movies-app do usuário remoto)
+#   MOVIES_APP_SSH          destino SSH (padrão: pi@raspberrypi.local)
+#   MOVIES_APP_REMOTE_DIR   raiz do repositório NA PI (padrão: /home/pi/lovers-movies)
 #   MOVIES_APP_RSYNC_EXTRA  ex.: "-e ssh -i ~/.ssh/id_pi"
 #
 # Flags:
@@ -22,6 +22,7 @@ set -euo pipefail
 RED='\033[0;31m'
 GRN='\033[0;32m'
 YLW='\033[0;33m'
+CYN='\033[0;36m'
 RST='\033[0m'
 
 die() { echo -e "${RED}Erro:${RST} $*" >&2; exit 1; }
@@ -36,8 +37,8 @@ Uso:
   ./install-rpi.sh from-host [opções]
 
 Variáveis de ambiente:
-  MOVIES_APP_SSH          padrão: gabeevi@raspberrypi.local
-  MOVIES_APP_REMOTE_DIR   raiz do repo na Pi (padrão: <HOME remoto>/movies-app)
+  MOVIES_APP_SSH          padrão: pi@raspberrypi.local
+  MOVIES_APP_REMOTE_DIR   raiz do repo na Pi (padrão: /home/pi/lovers-movies)
   MOVIES_APP_RSYNC_EXTRA  texto extra entre os args do rsync (ex.: -e "ssh -i ...")
 
 Opções:
@@ -81,10 +82,8 @@ SSH_BASE=(ssh -o ConnectTimeout=20)
 if [[ -n "${MOVIES_APP_REMOTE_DIR:-}" ]]; then
   RDIR="${MOVIES_APP_REMOTE_DIR%/}"
 else
-  info "Detectando HOME na Pi (MOVIES_APP_REMOTE_DIR não definido)…"
-  _rh="$("${SSH_BASE[@]}" "$MOVIES_APP_SSH" 'printf %s "$HOME"')" || die "SSH falhou para $MOVIES_APP_SSH (chave ou rede?)"
-  RDIR="$_rh/movies-app"
-  info "Usando raiz remota: $RDIR (exporte MOVIES_APP_REMOTE_DIR se o clone estiver noutro lugar)"
+  RDIR="/home/pi/lovers-movies"
+  info "Usando raiz remota padrão: $RDIR (exporte MOVIES_APP_REMOTE_DIR para outro caminho)"
 fi
 
 info "Destino: $MOVIES_APP_SSH:$RDIR"
@@ -127,7 +126,25 @@ else
   "${SSH_BASE[@]}" -t "$MOVIES_APP_SSH" "sudo systemctl restart movies-app.service && sudo systemctl --no-pager status movies-app.service || true"
 fi
 
+# --- URLs (lê FLASK_BIND na Pi, igual ideia do install-rpi.sh no fim) ---
+_pi_ip="$("${SSH_BASE[@]}" "$MOVIES_APP_SSH" 'hostname -I 2>/dev/null | awk "{print \$1}"' 2>/dev/null || true)"
+_pi_bind="$("${SSH_BASE[@]}" "$MOVIES_APP_SSH" 'grep ^FLASK_BIND= /etc/movies-app.env 2>/dev/null | tail -1 | cut -d= -f2-' 2>/dev/null || true)"
+_pi_bind="${_pi_bind:-0.0.0.0:8080}"
+_pi_host="${_pi_bind%:*}"
+_pi_port="${_pi_bind##*:}"
+[[ "$_pi_port" == "$_pi_bind" ]] && _pi_port="8080"
+
 echo ""
 echo -e "${GRN}Deploy do frontend concluído.${RST}"
-echo "  URL típica: http://raspberrypi.local:8080 (ou o IP da Pi)"
-echo "  Se o repo não estiver em ~/movies-app, defina: export MOVIES_APP_REMOTE_DIR=/caminho/absoluto/na/pi"
+echo -e "${CYN}URLs na Raspberry (conforme FLASK_BIND na Pi = ${_pi_bind}):${RST}"
+echo "  - Na própria Pi:     http://127.0.0.1:${_pi_port}"
+if [[ "$_pi_host" == "0.0.0.0" ]] || [[ "$_pi_host" == "*" ]]; then
+  if [[ -n "${_pi_ip:-}" ]]; then
+    echo "  - Na sua rede:      http://${_pi_ip}:${_pi_port}"
+  fi
+  echo "  - Hostname .local:  http://$(printf '%s' "$MOVIES_APP_SSH" | sed 's/.*@//'):${_pi_port}  (se mDNS responder)"
+else
+  echo "  (Serviço escutando em ${_pi_host}:${_pi_port} — só acessível conforme essa interface na Pi.)"
+fi
+echo ""
+  echo "  Se o repo não estiver em /home/pi/lovers-movies: export MOVIES_APP_REMOTE_DIR=/caminho/absoluto/na/pi"

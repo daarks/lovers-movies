@@ -13,7 +13,7 @@
     <noscript>
       <section class="welcome-shell-fallback">
         <h1>Quem está usando este aparelho agora?</h1>
-        <p>Habilite JavaScript para selecionar o perfil ativo.</p>
+        <p>Ative o JavaScript para escolher o perfil ativo.</p>
       </section>
     </noscript>
     <section class="welcome-shell-fallback welcome-shell-fallback--pe">
@@ -30,11 +30,27 @@
 {% block scripts_extra %}
 <script>
 (function () {
+  function apiPath(path) {
+    var root = (document.body && document.body.getAttribute("data-app-base")) || "";
+    root = String(root).replace(/\/$/, "");
+    var p = path.charAt(0) === "/" ? path : "/" + path;
+    return root ? root + p : p;
+  }
   function pick(slug) {
+    slug = slug === "b" ? "b" : "a";
     try {
-      localStorage.setItem("movies_app_active_profile_slug", slug === "b" ? "b" : "a");
+      localStorage.setItem("movies_app_active_profile_slug", slug);
     } catch (e) { /* ignore */ }
-    window.location.href = "/";
+    fetch(apiPath("/api/active-profile"), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: slug }),
+    })
+      .catch(function () {})
+      .finally(function () {
+        window.location.href = "/";
+      });
   }
   document.querySelectorAll("#welcome-root .js-welcome-pick").forEach(function (btn) {
     btn.addEventListener("click", function () {

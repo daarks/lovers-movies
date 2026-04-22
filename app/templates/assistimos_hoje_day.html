@@ -87,7 +87,7 @@
       .then(function (data) {
         var items = data.items || [];
         if (!items.length) {
-          grid.innerHTML = "<p class=\"text-muted\">Nenhum registo neste dia.</p>";
+          grid.innerHTML = "<p class=\"text-muted\">Nenhum registro neste dia.</p>";
           return;
         }
         grid.innerHTML = items

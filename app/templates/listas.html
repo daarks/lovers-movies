@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Listas{% endblock %}
+{% block body_class %}page-history page-react{% endblock %}
+{% block nav_listas %} is-active{% endblock %}
+{% block body %}
+<main class="page-history-main" id="page-listas" data-page="listas">
+  <div
+    id="listas-root"
+    class="listas-shell"
+    aria-busy="true"
+    data-view="{{ listas_view }}"
+    data-list-id="{{ list_id if list_id is not none else '' }}"
+  >
+    <noscript>
+      <section class="listas-shell-fallback">
+        <h1>Listas</h1>
+        <p>Ative JavaScript para ver o modo premium.</p>
+      </section>
+    </noscript>
+    <section class="listas-shell-fallback" aria-hidden="true">
+      <p class="text-muted">Carregando…</p>
+    </section>
+  </div>
+</main>
+{% endblock %}
+{% block scripts_extra %}
+{{ vite_entry_tags('listas') }}
+{% endblock %}

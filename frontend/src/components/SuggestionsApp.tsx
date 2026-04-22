@@ -8,6 +8,7 @@ import {
   Tv,
   Film,
   Dices,
+  List,
   X,
   Plus,
   Minus,
@@ -31,6 +32,11 @@ import {
 } from "../ds";
 import { appUrl } from "../lib/appBase";
 import { apiGet } from "../lib/api";
+import {
+  clearSorteioDrawn,
+  loadSorteioDrawn,
+  rememberSorteioDrawn,
+} from "../lib/sorteioSessionDrawn";
 import { formatDateBR, mediaTypeLabel, posterUrl } from "../lib/utils";
 import type { SearchHit } from "../lib/types";
 
@@ -270,13 +276,32 @@ function ResultSkeleton() {
 
 /* ---------------- Seção 1: Aleatório por gênero ---------------- */
 
+interface MediaListsMeta {
+  builtin: { key: string; name: string; item_count: number };
+  custom: { id: number; name: string; item_count: number }[];
+}
+
 function RandomByGenreSection() {
   const narrowSheet = useNarrowSorteioSheet();
   const [media, setMedia] = useState<MediaChoice>("movie");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set(["__any__"]));
+  const [listPick, setListPick] = useState<string>("");
+  const [listsMeta, setListsMeta] = useState<MediaListsMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SuggestionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let c = false;
+    apiGet<MediaListsMeta>("/api/media-lists")
+      .then((d) => {
+        if (!c) setListsMeta(d);
+      })
+      .catch(() => {});
+    return () => {
+      c = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedKeys.has("__any__") || selectedKeys.size === 0) {
@@ -326,20 +351,28 @@ function RandomByGenreSection() {
     setLoading(true);
     setError(null);
     try {
-      const body: Record<string, unknown> = { media_type: currentMedia };
-      if (selectedKeys.has("__any__") || selectedKeys.size === 0) {
-        /* só tipo de mídia */
-      } else if ([...selectedKeys].some((k) => k.startsWith("k:"))) {
-        const kidStr = [...selectedKeys].find((k) => k.startsWith("k:"))?.slice(2);
-        const kid = kidStr ? parseInt(kidStr, 10) : NaN;
-        if (!isNaN(kid)) body.keyword_id = kid;
+      let body: Record<string, unknown>;
+      if (listPick) {
+        body = {
+          list_pick: listPick === "fila" ? "fila" : parseInt(listPick, 10),
+        };
       } else {
-        const ids = [...selectedKeys]
-          .filter((k) => k.startsWith("g:"))
-          .map((k) => parseInt(k.slice(2), 10))
-          .filter((n) => !isNaN(n));
-        if (ids.length) body.genre_ids = ids;
+        body = { media_type: currentMedia };
+        if (selectedKeys.has("__any__") || selectedKeys.size === 0) {
+          /* só tipo de mídia */
+        } else if ([...selectedKeys].some((k) => k.startsWith("k:"))) {
+          const kidStr = [...selectedKeys].find((k) => k.startsWith("k:"))?.slice(2);
+          const kid = kidStr ? parseInt(kidStr, 10) : NaN;
+          if (!isNaN(kid)) body.keyword_id = kid;
+        } else {
+          const ids = [...selectedKeys]
+            .filter((k) => k.startsWith("g:"))
+            .map((k) => parseInt(k.slice(2), 10))
+            .filter((n) => !isNaN(n));
+          if (ids.length) body.genre_ids = ids;
+        }
       }
+      body.exclude_drawn = loadSorteioDrawn();
       const res = await fetch(appUrl("/suggestions/random"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -350,6 +383,8 @@ function RandomByGenreSection() {
         setError(data.error || "Não foi possível obter sugestão.");
         setResult(null);
       } else {
+        const mt: "movie" | "tv" = data.media_type === "tv" ? "tv" : "movie";
+        rememberSorteioDrawn({ id: Number(data.id), media_type: mt });
         setResult(data);
       }
     } catch (err) {
@@ -373,20 +408,62 @@ function RandomByGenreSection() {
             </GradientTitle>
           </h2>
           <p className="sgx-section-sub">
-            Escolha um ou vários gêneros (OR no TMDB). A gente sorteia um título pra vocês assistirem juntinhos.
+            Por gênero no TMDB (OR) <strong>ou</strong> um item ao acaso de uma das suas listas (mesmas da página Listas).
+            Nesta aba não repetimos o mesmo título até você recarregar a página.
+          </p>
+          <p className="sgx-section-sub sgx-section-sub--inline">
+            <button
+              type="button"
+              className="sgx-linkish"
+              onClick={() => {
+                clearSorteioDrawn();
+                setResult(null);
+                setError(null);
+              }}
+            >
+              Zerar histórico de sorteios desta aba
+            </button>
           </p>
         </header>
 
-        <div className="sgx-section-controls">
-          <SegmentedToggle
-            value={currentMedia}
-            onValueChange={(v) => setMedia(v)}
-            options={MEDIA_OPTIONS}
-            ariaLabel="Filmes ou séries"
-          />
+        <div className="sgx-list-pick">
+          <label className="sgx-list-pick-label">
+            <List size={14} aria-hidden /> Sortear de uma lista
+          </label>
+          <select
+            className="sgx-list-pick-select"
+            value={listPick}
+            onChange={(e) => setListPick(e.target.value)}
+            aria-label="Lista para sorteio"
+          >
+            <option value="">— Usar gêneros TMDB abaixo —</option>
+            {listsMeta ? (
+              <>
+                <option value="fila" disabled={listsMeta.builtin.item_count < 1}>
+                  {listsMeta.builtin.name} ({listsMeta.builtin.item_count})
+                </option>
+                {listsMeta.custom.map((row) => (
+                  <option key={row.id} value={String(row.id)} disabled={row.item_count < 1}>
+                    {row.name} ({row.item_count})
+                  </option>
+                ))}
+              </>
+            ) : null}
+          </select>
         </div>
 
-        <div className="sgx-genre-grid" role="list">
+        <div className="sgx-section-controls">
+          <div className={cx(listPick && "sgx-media-toggle--dim")}>
+            <SegmentedToggle
+              value={currentMedia}
+              onValueChange={(v) => setMedia(v)}
+              options={MEDIA_OPTIONS}
+              ariaLabel="Filmes ou séries"
+            />
+          </div>
+        </div>
+
+        <div className={cx("sgx-genre-grid", listPick && "sgx-genre-grid--dim")} role="list" aria-disabled={Boolean(listPick)}>
           {GENRE_CHIPS.map((chip) => {
             const active = selectedKeys.has(genreChipKey(chip));
             return (

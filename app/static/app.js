@@ -40,7 +40,7 @@
   function initIndexScroll() {
     var home =
       document.getElementById("page-history") ||
-      document.getElementById("page-watch-later");
+      document.getElementById("page-listas");
     if (!home) return;
 
     var y = sessionStorage.getItem(SCROLL_KEY);
@@ -939,6 +939,44 @@
     var randomBtn = document.getElementById("sugg-random-btn");
     var randomAgain = document.getElementById("sugg-random-again");
 
+    var SORTEIO_DRAWN_KEY = "movies_app_sorteio_drawn_v1";
+    function loadSorteioDrawn() {
+      try {
+        var raw = sessionStorage.getItem(SORTEIO_DRAWN_KEY);
+        if (!raw) return [];
+        var arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return [];
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+          var x = arr[i];
+          if (!x || typeof x !== "object") continue;
+          var mt = x.media_type === "tv" ? "tv" : x.media_type === "movie" ? "movie" : null;
+          if (!mt) continue;
+          var id = parseInt(x.id, 10);
+          if (isNaN(id)) continue;
+          out.push({ id: id, media_type: mt });
+        }
+        return out;
+      } catch (e) {
+        return [];
+      }
+    }
+    function rememberSorteioDrawn(data) {
+      try {
+        var cur = loadSorteioDrawn();
+        var mt = data.media_type === "tv" ? "tv" : "movie";
+        var id = parseInt(data.id, 10);
+        if (isNaN(id)) return;
+        var k = mt + ":" + id;
+        for (var j = 0; j < cur.length; j++) {
+          if (cur[j].media_type + ":" + cur[j].id === k) return;
+        }
+        cur.push({ id: id, media_type: mt });
+        if (cur.length > 400) cur = cur.slice(-400);
+        sessionStorage.setItem(SORTEIO_DRAWN_KEY, JSON.stringify(cur));
+      } catch (e2) {}
+    }
+
     function fetchRandom() {
       randomWrap.hidden = false;
       randomInner.innerHTML = suggRandomSkeleton();
@@ -956,6 +994,7 @@
           body.genre_id = gid;
         }
       }
+      body.exclude_drawn = loadSorteioDrawn();
       fetch("/suggestions/random", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -976,6 +1015,7 @@
               "</p>";
             return;
           }
+          rememberSorteioDrawn(data);
           randomInner.innerHTML = renderRandomCard(data);
         })
         .catch(function () {
@@ -1436,6 +1476,50 @@
 
   var ACTIVE_PROFILE_KEY = "movies_app_active_profile_slug";
 
+  function initPartnerPresencePoll() {
+    var path = (window.location.pathname || "").replace(/\/$/, "") || "/";
+    if (path === "/bem-vindo") return;
+    var wrap = document.getElementById("site-header-partner");
+    var label = document.getElementById("site-header-partner-label");
+    var dot = wrap && wrap.querySelector(".site-header-partner-dot");
+    var body = document.body;
+    if (!wrap || !label || !dot) return;
+
+    function apiPath(pth) {
+      var root = (body && body.getAttribute("data-app-base")) || "";
+      root = String(root).replace(/\/$/, "");
+      var p = pth.charAt(0) === "/" ? pth : "/" + pth;
+      return root ? root + p : p;
+    }
+
+    function tick() {
+      var slug = (localStorage.getItem(ACTIVE_PROFILE_KEY) || "a").toLowerCase();
+      if (slug !== "a" && slug !== "b") {
+        wrap.setAttribute("hidden", "");
+        return;
+      }
+      fetch(apiPath("/api/presence"), { credentials: "same-origin" })
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (j) {
+          var other = slug === "b" ? "a" : "b";
+          var on = j && j.online && j.online[other];
+          var la = body.getAttribute("data-profile-label-a") || "A";
+          var lb = body.getAttribute("data-profile-label-b") || "B";
+          var otherName = other === "b" ? lb : la;
+          wrap.removeAttribute("hidden");
+          dot.classList.toggle("is-online", !!on);
+          label.textContent = on ? otherName + " no app" : otherName + " ausente";
+          wrap.setAttribute("title", label.textContent);
+        })
+        .catch(function () {});
+    }
+
+    tick();
+    window.setInterval(tick, 30000);
+  }
+
   function initActiveUser() {
     var path = (window.location.pathname || "").replace(/\/$/, "") || "/";
     if (path !== "/bem-vindo") {
@@ -1458,17 +1542,34 @@
       return slug === "b" ? lb : la;
     }
 
+    function apiPath(path) {
+      var root = (body && body.getAttribute("data-app-base")) || "";
+      root = String(root).replace(/\/$/, "");
+      var p = path.charAt(0) === "/" ? path : "/" + path;
+      return root ? root + p : p;
+    }
+
     function setProfileAndClose(s) {
-      localStorage.setItem(ACTIVE_PROFILE_KEY, s === "b" ? "b" : "a");
-      if (typeof dlg.close === "function") dlg.close();
-      paint();
-      if (window.showAppToast) {
-        window.showAppToast("Perfil ativo: " + labelFor(s), "ok");
-      }
-      var pNow = (window.location.pathname || "").replace(/\/$/, "") || "/";
-      if (pNow === "/bem-vindo") {
-        window.location.href = "/";
-      }
+      var slug = s === "b" ? "b" : "a";
+      localStorage.setItem(ACTIVE_PROFILE_KEY, slug);
+      fetch(apiPath("/api/active-profile"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: slug }),
+      })
+        .catch(function () {})
+        .finally(function () {
+          if (typeof dlg.close === "function") dlg.close();
+          paint();
+          if (window.showAppToast) {
+            window.showAppToast("Perfil ativo: " + labelFor(slug), "ok");
+          }
+          var pNow = (window.location.pathname || "").replace(/\/$/, "") || "/";
+          if (pNow === "/bem-vindo") {
+            window.location.href = "/";
+          }
+        });
     }
 
     function paint() {
@@ -1712,6 +1813,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     initActiveUser();
+    initPartnerPresencePoll();
     initNavDrawer();
     initWelcomePick();
     initIndexScroll();

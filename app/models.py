@@ -33,7 +33,7 @@ class WatchedItem(db.Model):
     # JSON: {"1": {"rating": 8.5, "review": "..."}, "2": {...}}
     season_data = db.Column(db.Text, nullable=True)
     added_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-    # Fase 2: snapshot TMDB (países, diretores, géneros ids, runtime…) para conquistas/mapa
+    # Fase 2: snapshot TMDB (países, diretores, gêneros ids, runtime…) para conquistas/mapa
     tmdb_snapshot_json = db.Column(db.Text, nullable=True)
 
 
@@ -83,6 +83,43 @@ class Profile(db.Model):
     preferred_genre_ids = db.Column(db.String(256))  # CSV de ids TMDB
 
 
+class MediaList(db.Model):
+    """Lista customizada de títulos (input para swipe / sorteio)."""
+
+    __tablename__ = "media_lists"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    couple_id = db.Column(db.Integer, db.ForeignKey("couples.id"), nullable=False)
+    name = db.Column(db.String(160), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+
+class MediaListItem(db.Model):
+    """Item em uma MediaList (metadados espelham watch_later_items)."""
+
+    __tablename__ = "media_list_items"
+    __table_args__ = (
+        UniqueConstraint("list_id", "tmdb_id", "media_type", name="uq_mli_list_tmdb"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    list_id = db.Column(db.Integer, db.ForeignKey("media_lists.id", ondelete="CASCADE"), nullable=False)
+    tmdb_id = db.Column(db.Integer, nullable=False)
+    media_type = db.Column(db.String(16), nullable=False)
+    title = db.Column(db.String(512), nullable=False)
+    original_title = db.Column(db.String(512))
+    overview = db.Column(db.Text)
+    poster_path = db.Column(db.String(512))
+    backdrop_path = db.Column(db.String(512))
+    release_date = db.Column(db.String(32))
+    genres = db.Column(db.String(512))
+    vote_average = db.Column(db.Float)
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+    added_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+
 class MediaEmbedding(db.Model):
     """Texto indexado + embedding (JSON) para busca semântica."""
 
@@ -107,7 +144,7 @@ class MediaEmbedding(db.Model):
 class SwipeItem(db.Model):
     """
     Estado por título no deck do casal.
-    pending | liked_a | liked_b | matched | rejected
+    pending | liked_a | liked_b | rejected_a | rejected_b | matched | rejected | no_match
     """
 
     __tablename__ = "swipe_items"
@@ -122,11 +159,14 @@ class SwipeItem(db.Model):
     title = db.Column(db.String(512), nullable=False)
     poster_path = db.Column(db.String(512))
     state = db.Column(db.String(16), nullable=False, default="pending")
+    vote_a = db.Column(db.String(8), nullable=False, default="none")  # none | like | reject
+    vote_b = db.Column(db.String(8), nullable=False, default="none")  # none | like | reject
+    last_session_public_id = db.Column(db.String(40), nullable=True, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
 
 class SwipeSession(db.Model):
-    """Deck de swipe partilhado pelo casal (mesma ordem para os dois perfis / dispositivos)."""
+    """Deck de swipe compartilhado pelo casal (mesma ordem para os dois perfis / dispositivos)."""
 
     __tablename__ = "swipe_sessions"
     __table_args__ = (UniqueConstraint("couple_id", name="uq_swipe_session_couple"),)
@@ -134,14 +174,42 @@ class SwipeSession(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     couple_id = db.Column(db.Integer, db.ForeignKey("couples.id"), nullable=False)
     active = db.Column(db.Boolean, nullable=False, default=True)
-    source = db.Column(db.String(32), nullable=False)  # watchlater | genre
+    source = db.Column(db.String(32), nullable=False)  # watchlater | genre | list
     media = db.Column(db.String(8))  # movie | tv (genre)
     genre_ids_csv = db.Column(db.String(256))
+    list_id = db.Column(db.Integer, db.ForeignKey("media_lists.id", ondelete="SET NULL"), nullable=True)
     deck_json = db.Column(db.Text, nullable=False, default="[]")
+    # Legado: antes era um único cursor compartilhado (causava “saltos” entre dispositivos).
     cursor_index = db.Column(db.Integer, nullable=False, default=0)
-    # Identificador estável desta “rodada” de sessão (partilhável / lista no UI).
+    cursor_index_a = db.Column(db.Integer, nullable=False, default=0)
+    cursor_index_b = db.Column(db.Integer, nullable=False, default=0)
+    # Identificador estável desta “rodada” de sessão (compartilhável / lista no UI).
     public_id = db.Column(db.String(40), nullable=True, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+
+class SwipeSessionMatch(db.Model):
+    """Histórico de matches por sessão do swipe."""
+
+    __tablename__ = "swipe_session_matches"
+    __table_args__ = (
+        UniqueConstraint(
+            "couple_id",
+            "session_public_id",
+            "tmdb_id",
+            "media_type",
+            name="uq_swipe_session_match",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    couple_id = db.Column(db.Integer, db.ForeignKey("couples.id"), nullable=False)
+    session_public_id = db.Column(db.String(40), nullable=False, index=True)
+    tmdb_id = db.Column(db.Integer, nullable=False)
+    media_type = db.Column(db.String(16), nullable=False)
+    title = db.Column(db.String(512), nullable=False)
+    poster_path = db.Column(db.String(512))
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
 
 class TodayPick(db.Model):

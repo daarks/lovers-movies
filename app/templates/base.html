@@ -21,13 +21,14 @@
   <div id="app-toast-host" class="app-toast-host" aria-live="polite"></div>
 
   <div id="nav-drawer-backdrop" class="nav-drawer-backdrop" aria-hidden="true"></div>
-  <nav id="app-drawer" class="nav-drawer" aria-label="Menu da aplicação" aria-hidden="true">
+  <nav id="app-drawer" class="nav-drawer" aria-label="Menu do app" aria-hidden="true">
     <div class="nav-drawer-head">
       <span class="nav-drawer-title">Menu</span>
       <button type="button" class="filter-modal-close nav-drawer-close" id="nav-drawer-close" aria-label="Fechar menu">×</button>
     </div>
     <ul class="nav-drawer-list" role="list">
       <li><a href="{{ url_for('suggestions_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">🍿</span> Sugestões</a></li>
+      <li><a href="{{ url_for('listas_index') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">📑</span> Listas</a></li>
       <li><a href="{{ url_for('assistimos_hoje_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">📅</span> Assistimos hoje</a></li>
       <li><a href="{{ url_for('conquistas_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">🏅</span> Conquistas</a></li>
       <li><a href="{{ url_for('stats_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">📊</span> Estatísticas</a></li>
@@ -48,10 +49,16 @@
       <span class="site-header-menu-bar" aria-hidden="true"></span>
     </button>
     <h1 class="site-logo"><a href="{{ url_for('index') }}" class="{% block header_logo_class %}nav-preserve-scroll{% endblock %}">🎬 Nossa Lista</a></h1>
-    <div class="site-header-greet" id="site-header-greet" hidden>
-      <span class="site-header-hello-prefix">Olá, </span>
-      <button type="button" class="site-header-user-name top-subnav-link--ghost" id="active-user-badge" hidden></button>
-      <span class="site-header-hello-suffix">!</span>
+    <div class="site-header-right">
+      <div class="site-header-partner" id="site-header-partner" hidden>
+        <span class="site-header-partner-dot" aria-hidden="true"></span>
+        <span class="site-header-partner-label" id="site-header-partner-label"></span>
+      </div>
+      <div class="site-header-greet" id="site-header-greet" hidden>
+        <span class="site-header-hello-prefix">Olá, </span>
+        <button type="button" class="site-header-user-name top-subnav-link--ghost" id="active-user-badge" hidden></button>
+        <span class="site-header-hello-suffix">!</span>
+      </div>
     </div>
   </header>
   {% block body %}{% endblock %}
@@ -76,9 +83,9 @@
       <span class="bottom-nav-icon" aria-hidden="true">📋</span>
       <span class="bottom-nav-label">Histórico</span>
     </a>
-    <a href="{{ url_for('watch_later_page') }}" class="bottom-nav-link{% block nav_watch_later %}{% endblock %}">
-      <span class="bottom-nav-icon" aria-hidden="true">⏳</span>
-      <span class="bottom-nav-label">Ver depois</span>
+    <a href="{{ url_for('listas_index') }}" class="bottom-nav-link{% block nav_listas %}{% endblock %}">
+      <span class="bottom-nav-icon" aria-hidden="true">📑</span>
+      <span class="bottom-nav-label">Listas</span>
     </a>
     <a href="{{ url_for('couple_swipe_page') }}" class="bottom-nav-link{% block nav_swipe %}{% endblock %}">
       <span class="bottom-nav-icon" aria-hidden="true">💜</span>

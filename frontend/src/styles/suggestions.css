@@ -190,8 +190,65 @@
   max-width: 620px;
 }
 
+.sgx-section-sub--inline {
+  margin-top: 8px;
+}
+
+.sgx-linkish {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  color: rgba(196, 181, 253, 0.95);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sgx-linkish:hover {
+  color: #fff;
+}
+
 .sgx-section-controls {
   margin-bottom: 20px;
+}
+
+.sgx-list-pick {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+.sgx-list-pick-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--rx-font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  margin-bottom: 10px;
+}
+.sgx-list-pick-select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 10, 18, 0.72);
+  color: #fff;
+  padding: 10px 12px;
+  font-family: var(--rx-font-ui);
+  font-size: 14px;
+}
+.sgx-genre-grid--dim {
+  pointer-events: none;
+  opacity: 0.42;
+}
+.sgx-media-toggle--dim {
+  pointer-events: none;
+  opacity: 0.42;
 }
 
 /* ---------- Genre grid ---------- */

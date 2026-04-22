@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Heart, Sparkles, UserRound, Popcorn, Film } from "lucide-react";
 import { GradientTitle, MagneticButton, ScrollReveal, SurfacePanel } from "../ds";
+import { appUrl } from "../lib/appBase";
 
 interface WelcomeAppProps {
   labelA: string;
@@ -18,16 +19,26 @@ export default function WelcomeApp({ labelA, labelB }: WelcomeAppProps) {
     document.getElementById("welcome-root")?.removeAttribute("aria-busy");
   }, []);
 
-  function choose(slug: "a" | "b") {
+  async function choose(slug: "a" | "b") {
     setPick(slug);
     try {
       localStorage.setItem(ACTIVE_PROFILE_KEY, slug);
     } catch {
       /* ignore */
     }
+    try {
+      await fetch(appUrl("/api/active-profile"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug }),
+      });
+    } catch {
+      /* ignore — cookie de sessão pode falhar em CORS estrito; localStorage ainda ajuda o resto do app */
+    }
     setTimeout(() => {
       window.location.href = "/";
-    }, 520);
+    }, 420);
   }
 
   return (
@@ -87,7 +98,7 @@ export default function WelcomeApp({ labelA, labelB }: WelcomeAppProps) {
               <Sparkles size={12} /> XP compartilhado
             </span>
             <span>
-              <Popcorn size={12} /> histórico em comum
+              <Popcorn size={12} /> Histórico em comum
             </span>
           </div>
         </SurfacePanel>

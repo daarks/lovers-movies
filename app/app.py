@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import queue
 import random
 import uuid
 import re
@@ -15,6 +16,7 @@ from pathlib import Path
 import requests
 from flask import (
     Flask,
+    Response,
     abort,
     current_app,
     g,
@@ -22,11 +24,12 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 from markupsafe import Markup
 from flask_caching import Cache
-from sqlalchemy import and_, desc, inspect, or_, text
+from sqlalchemy import and_, desc, func, inspect, or_, text
 
 from models import (
     AchievementProgress,
@@ -39,12 +42,15 @@ from models import (
     Profile,
     SeasonProfileScore,
     SwipeItem,
+    SwipeSessionMatch,
     SwipeSession,
     TodayPick,
     TriviaCache,
     WatchedItem,
     WatchBet,
     WatchLaterItem,
+    MediaList,
+    MediaListItem,
     WatchProfileRating,
     XpLedgerEntry,
     db,
@@ -53,6 +59,8 @@ from services.gemini_client import gemini_generate_text
 from services.gemini_http_timeout import gemini_http_timeout_ms
 from services.smart_search_service import run_smart_search
 from services.structured_logging import IntegrationTimer
+from services import presence as presence_service
+from services.sse_manager import sse_manager
 from services.swipe_fsm import transition_on_swipe
 from services.http_resilience import request_with_retry
 from services.tmdb_cached import tmdb_get_json_cached
@@ -90,6 +98,30 @@ INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
 
 cache = Cache()
 _TMDB_SESSION = requests.Session()
+
+
+def _parse_exclude_drawn(body: dict[str, Any]) -> set[tuple[str, int]]:
+    """IDs já sorteados na aba atual (lista enviada pelo cliente, sessionStorage).
+
+    Formato: ``exclude_drawn``: ``[{\"id\": 123, \"media_type\": \"movie\"}, ...]``
+    """
+    raw = body.get("exclude_drawn")
+    if not isinstance(raw, list):
+        return set()
+    out: set[tuple[str, int]] = set()
+    for x in raw[:500]:
+        if not isinstance(x, dict):
+            continue
+        mt = x.get("media_type")
+        if mt not in ("movie", "tv"):
+            continue
+        tid = x.get("id")
+        try:
+            tid_i = int(tid)
+        except (TypeError, ValueError):
+            continue
+        out.add((str(mt), tid_i))
+    return out
 
 
 def _load_secrets_env():
@@ -341,6 +373,112 @@ def _ensure_swipe_session_public_id():
         if "public_id" not in cols:
             with db.engine.begin() as conn:
                 conn.execute(text("ALTER TABLE swipe_sessions ADD COLUMN public_id VARCHAR(40)"))
+    except Exception:
+        pass
+
+
+def _ensure_swipe_session_profile_cursors():
+    """Cursores por perfil (A/B) no swipe — deck igual, posição independente."""
+    try:
+        insp = inspect(db.engine)
+        if "swipe_sessions" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("swipe_sessions")}
+        added = False
+        with db.engine.begin() as conn:
+            if "cursor_index_a" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE swipe_sessions ADD COLUMN cursor_index_a INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+                added = True
+            if "cursor_index_b" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE swipe_sessions ADD COLUMN cursor_index_b INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+                added = True
+        if added:
+            with db.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE swipe_sessions SET cursor_index_a = cursor_index, "
+                        "cursor_index_b = cursor_index"
+                    )
+                )
+    except Exception:
+        pass
+
+
+def _ensure_swipe_session_list_id():
+    """Coluna list_id em swipe_sessions (deck a partir de lista customizada)."""
+    try:
+        insp = inspect(db.engine)
+        if "swipe_sessions" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("swipe_sessions")}
+        if "list_id" not in cols:
+            with db.engine.begin() as conn:
+                conn.execute(text("ALTER TABLE swipe_sessions ADD COLUMN list_id INTEGER"))
+    except Exception:
+        pass
+
+
+def _ensure_swipe_item_votes_schema():
+    """Campos de voto por perfil no swipe_items (SQLite)."""
+    try:
+        insp = inspect(db.engine)
+        if "swipe_items" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("swipe_items")}
+        with db.engine.begin() as conn:
+            if "vote_a" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE swipe_items ADD COLUMN vote_a VARCHAR(8) NOT NULL DEFAULT 'none'"
+                    )
+                )
+            if "vote_b" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE swipe_items ADD COLUMN vote_b VARCHAR(8) NOT NULL DEFAULT 'none'"
+                    )
+                )
+            if "last_session_public_id" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE swipe_items ADD COLUMN last_session_public_id VARCHAR(40)"
+                    )
+                )
+            # Backfill para linhas antigas (antes de vote_a/vote_b).
+            conn.execute(
+                text(
+                    "UPDATE swipe_items SET vote_a='like' "
+                    "WHERE state='liked_a' AND COALESCE(vote_a,'none')='none'"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE swipe_items SET vote_b='like' "
+                    "WHERE state='liked_b' AND COALESCE(vote_b,'none')='none'"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE swipe_items SET vote_a='like', vote_b='like' "
+                    "WHERE state='matched' "
+                    "AND (COALESCE(vote_a,'none')='none' OR COALESCE(vote_b,'none')='none')"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE swipe_items SET vote_a='reject', vote_b='reject' "
+                    "WHERE state='rejected' "
+                    "AND (COALESCE(vote_a,'none')='none' OR COALESCE(vote_b,'none')='none')"
+                )
+            )
     except Exception:
         pass
 
@@ -888,7 +1026,7 @@ def _images_for_technical(tmdb_data, posters_limit=12, backdrops_limit=12):
 
 
 def _crew_person_dict(p):
-    """Crédito com id para links à página de pessoa."""
+    """Crédito com id para links para a página da pessoa."""
     return {
         "id": p.get("id"),
         "name": p.get("name") or "",
@@ -981,6 +1119,7 @@ def create_app() -> Flask:
         instance_path=str(INSTANCE_DIR),
     )
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=400)
     app.config["SQLALCHEMY_DATABASE_URI"] = (
         "sqlite:///" + str(INSTANCE_DIR / "movies.db")
     )
@@ -1015,6 +1154,9 @@ def create_app() -> Flask:
         _ensure_profile_display_names()
         _ensure_phase2_schema()
         _ensure_swipe_session_public_id()
+        _ensure_swipe_session_profile_cursors()
+        _ensure_swipe_session_list_id()
+        _ensure_swipe_item_votes_schema()
 
     @app.before_request
     def _req_timer_start():
@@ -1263,7 +1405,7 @@ def create_app() -> Flask:
 
     @app.get("/bem-vindo")
     def bem_vindo_page():
-        """Escolha única do perfil ativo (aparelho); depois redireciona à home."""
+        """Escolha única do perfil ativo (aparelho); depois redireciona para a home."""
         return render_template("bem_vindo.html")
 
     @app.get("/")
@@ -1333,10 +1475,26 @@ def create_app() -> Flask:
         return render_template("history.html", items=items)
 
     @app.get("/assistir-depois")
-    def watch_later_page():
-        """Fila para ver depois (mesma busca/filtros que o histórico, sem nota)."""
-        items = WatchLaterItem.query.order_by(WatchLaterItem.added_at.desc()).all()
-        return render_template("watch_later.html", items=items)
+    def watch_later_redirect():
+        """Compat: URL antiga redireciona para Listas."""
+        return redirect(url_for("listas_index"), code=301)
+
+    @app.get("/listas")
+    def listas_index():
+        return render_template("listas.html", listas_view="grid", list_id=None)
+
+    @app.get("/listas/nova")
+    def listas_nova():
+        return render_template("listas.html", listas_view="create", list_id=None)
+
+    @app.get("/listas/fila")
+    def listas_fila():
+        """Fila fixa 'Assistir depois' (watch_later_items)."""
+        return render_template("listas.html", listas_view="queue", list_id=None)
+
+    @app.get("/listas/<int:list_id>")
+    def listas_detail(list_id: int):
+        return render_template("listas.html", listas_view="detail", list_id=list_id)
 
     def _parse_cursor_limit(
         default_limit: int = 60,
@@ -1447,6 +1605,208 @@ def create_app() -> Flask:
                 "has_more": has_more,
             }
         )
+
+    @app.get("/api/media-lists")
+    def api_media_lists_summary():
+        """Resumo para grid Listas + seletores (swipe / sorteio)."""
+        cid = _couple_id()
+        wl_first = WatchLaterItem.query.order_by(WatchLaterItem.added_at.asc()).first()
+        wl_count = WatchLaterItem.query.count()
+        custom = (
+            MediaList.query.filter_by(couple_id=cid)
+            .order_by(MediaList.updated_at.desc())
+            .all()
+        )
+        lists_out = []
+        for row in custom:
+            first = (
+                MediaListItem.query.filter_by(list_id=row.id)
+                .order_by(MediaListItem.added_at.asc())
+                .first()
+            )
+            cnt = MediaListItem.query.filter_by(list_id=row.id).count()
+            lists_out.append(
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "description": row.description or "",
+                    "item_count": cnt,
+                    "cover_poster_path": first.poster_path if first else None,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                }
+            )
+        return jsonify(
+            {
+                "builtin": {
+                    "key": "fila",
+                    "name": "Assistir depois",
+                    "item_count": wl_count,
+                    "cover_poster_path": wl_first.poster_path if wl_first else None,
+                },
+                "custom": lists_out,
+            }
+        )
+
+    @app.post("/api/media-lists")
+    def api_media_lists_create():
+        cid = _couple_id()
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        if len(name) < 1 or len(name) > 160:
+            return jsonify({"error": "Nome da lista inválido (1–160 caracteres)."}), 400
+        desc = (body.get("description") or "").strip() or None
+        row = MediaList(couple_id=cid, name=name, description=desc)
+        db.session.add(row)
+        db.session.commit()
+        return jsonify(
+            {
+                "id": row.id,
+                "name": row.name,
+                "description": row.description or "",
+            }
+        )
+
+    @app.get("/api/media-lists/<int:list_id>")
+    def api_media_lists_get(list_id: int):
+        cid = _couple_id()
+        row = MediaList.query.filter_by(id=list_id, couple_id=cid).first()
+        if not row:
+            return jsonify({"error": "Não encontrada"}), 404
+        items = (
+            MediaListItem.query.filter_by(list_id=list_id)
+            .order_by(MediaListItem.sort_order.desc(), MediaListItem.added_at.desc())
+            .all()
+        )
+        return jsonify(
+            {
+                "id": row.id,
+                "name": row.name,
+                "description": row.description or "",
+                "items": [
+                    {
+                        "id": it.id,
+                        "tmdb_id": it.tmdb_id,
+                        "media_type": it.media_type,
+                        "title": it.title,
+                        "original_title": it.original_title,
+                        "overview": it.overview,
+                        "poster_path": it.poster_path,
+                        "backdrop_path": it.backdrop_path,
+                        "release_date": it.release_date,
+                        "genres": it.genres or "",
+                        "vote_average": it.vote_average,
+                        "added_at": it.added_at.isoformat() if it.added_at else None,
+                    }
+                    for it in items
+                ],
+            }
+        )
+
+    @app.route("/api/media-lists/<int:list_id>", methods=["PATCH"])
+    def api_media_lists_patch(list_id: int):
+        cid = _couple_id()
+        row = MediaList.query.filter_by(id=list_id, couple_id=cid).first()
+        if not row:
+            return jsonify({"error": "Não encontrada"}), 404
+        body = request.get_json(silent=True) or {}
+        if "name" in body:
+            name = (body.get("name") or "").strip()
+            if len(name) < 1 or len(name) > 160:
+                return jsonify({"error": "Nome inválido"}), 400
+            row.name = name
+        if "description" in body:
+            d = body.get("description")
+            row.description = (str(d).strip() or None) if d is not None else None
+        row.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"ok": True, "id": row.id, "name": row.name, "description": row.description or ""})
+
+    @app.delete("/api/media-lists/<int:list_id>")
+    def api_media_lists_delete(list_id: int):
+        cid = _couple_id()
+        row = MediaList.query.filter_by(id=list_id, couple_id=cid).first()
+        if not row:
+            return jsonify({"error": "Não encontrada"}), 404
+        db.session.delete(row)
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    @app.post("/api/media-lists/<int:list_id>/items")
+    def api_media_lists_add_item(list_id: int):
+        cid = _couple_id()
+        row = MediaList.query.filter_by(id=list_id, couple_id=cid).first()
+        if not row:
+            return jsonify({"error": "Não encontrada"}), 404
+        body = request.get_json(silent=True) or {}
+        try:
+            tmdb_id = int(body.get("tmdb_id"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "tmdb_id inválido"}), 400
+        media_type = (body.get("media_type") or "movie").strip()
+        if media_type not in ("movie", "tv"):
+            return jsonify({"error": "media_type inválido"}), 400
+        title = (body.get("title") or "").strip() or "Sem título"
+        original_title = (body.get("original_title") or "").strip() or None
+        overview = body.get("overview") or ""
+        poster_path = (body.get("poster_path") or "") or None
+        backdrop_path = (body.get("backdrop_path") or "") or None
+        release_date = (body.get("release_date") or "") or None
+        genres_str = (body.get("genres") or "") or None
+        try:
+            vote_average = float(body.get("vote_average") or 0)
+        except (TypeError, ValueError):
+            vote_average = 0.0
+        existing = MediaListItem.query.filter_by(
+            list_id=list_id, tmdb_id=tmdb_id, media_type=media_type
+        ).first()
+        if existing:
+            existing.title = title
+            existing.original_title = original_title
+            existing.overview = overview
+            existing.poster_path = poster_path
+            existing.backdrop_path = backdrop_path
+            existing.release_date = release_date
+            existing.genres = genres_str
+            existing.vote_average = vote_average
+        else:
+            mx = db.session.query(func.max(MediaListItem.sort_order)).filter_by(list_id=list_id).scalar()
+            try:
+                so = int(mx or 0) + 1
+            except (TypeError, ValueError):
+                so = 1
+            db.session.add(
+                MediaListItem(
+                    list_id=list_id,
+                    tmdb_id=tmdb_id,
+                    media_type=media_type,
+                    title=title,
+                    original_title=original_title,
+                    overview=overview,
+                    poster_path=poster_path,
+                    backdrop_path=backdrop_path,
+                    release_date=release_date,
+                    genres=genres_str,
+                    vote_average=vote_average,
+                    sort_order=so,
+                )
+            )
+        row.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    @app.delete("/api/media-lists/<int:list_id>/items/<int:item_id>")
+    def api_media_lists_remove_item(list_id: int, item_id: int):
+        cid = _couple_id()
+        row = MediaList.query.filter_by(id=list_id, couple_id=cid).first()
+        if not row:
+            return jsonify({"error": "Não encontrada"}), 404
+        it = MediaListItem.query.filter_by(id=item_id, list_id=list_id).first()
+        if not it:
+            return jsonify({"error": "Item não encontrado"}), 404
+        db.session.delete(it)
+        row.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"ok": True})
 
     @app.get("/estatisticas")
     def stats_page():
@@ -2541,7 +2901,7 @@ def create_app() -> Flask:
         dest = (request.form.get("return_to") or "").strip()
         if dest == "details" and mt in ("movie", "tv") and tid is not None:
             return redirect(url_for("details", media_type=mt, tmdb_id=tid))
-        return redirect(url_for("watch_later_page"))
+        return redirect(url_for("listas_fila"))
 
     @app.post("/delete/<int:item_id>")
     def delete_item(item_id: int):
@@ -2570,12 +2930,60 @@ def create_app() -> Flask:
 
     @app.post("/suggestions/random")
     def suggestions_random():
-        """Uma sugestão aleatória via discover do TMDB (gênero opcional)."""
+        """Uma sugestão aleatória via discover do TMDB (gênero opcional) ou 1 item de lista local."""
+        body = request.get_json(silent=True) or {}
+        list_pick = body.get("list_pick")
+        if list_pick is not None and str(list_pick).strip() != "":
+            cid = _couple_id()
+            lp = str(list_pick).strip().lower()
+            rows_all: list = []
+            if lp in ("fila", "watchlater", "queue", "assistir_depois"):
+                rows_all = WatchLaterItem.query.order_by(WatchLaterItem.added_at.asc()).all()
+            else:
+                try:
+                    lid = int(list_pick)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Lista inválida"}), 400
+                ml = MediaList.query.filter_by(id=lid, couple_id=cid).first()
+                if not ml:
+                    return jsonify({"error": "Lista não encontrada."}), 404
+                rows_all = (
+                    MediaListItem.query.filter_by(list_id=lid)
+                    .order_by(MediaListItem.added_at.asc())
+                    .all()
+                )
+            if not rows_all:
+                return jsonify({"error": "A lista está vazia."}), 404
+            excluded = _parse_exclude_drawn(body)
+            rows_ok = [
+                r
+                for r in rows_all
+                if (str(r.media_type), int(r.tmdb_id)) not in excluded
+            ]
+            if not rows_ok:
+                return jsonify(
+                    {
+                        "error": (
+                            "Nesta aba já sorteamos todos os títulos desta lista. "
+                            "Recarregue a página para zerar o histórico ou escolha outra lista."
+                        )
+                    }
+                ), 404
+            pick = random.choice(rows_ok)
+            return jsonify(
+                {
+                    "id": pick.tmdb_id,
+                    "title": pick.title,
+                    "media_type": pick.media_type,
+                    "poster_path": pick.poster_path,
+                    "overview": (pick.overview or "") or "",
+                }
+            )
+
         token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
         if not token:
             return jsonify({"error": "TMDB não configurado"}), 500
 
-        body = request.get_json(silent=True) or {}
         genre_id = body.get("genre_id")
         genre_ids_raw = body.get("genre_ids")
         keyword_id_raw = body.get("keyword_id")
@@ -2628,7 +3036,7 @@ def create_app() -> Flask:
             media_type = "tv"
 
         def try_discover(mt, min_votes, pages):
-            """Tenta várias páginas até obter resultados (evita 404 por página vazia)."""
+            """Testa várias páginas até obter resultados (evita 404 por página vazia)."""
             base = {
                 "language": TMDB_LANG,
                 "sort_by": "popularity.desc",
@@ -2656,37 +3064,89 @@ def create_app() -> Flask:
             return [], mt
 
         pages_pool = list(range(1, 21))
-        results, media_type = try_discover(media_type, 100, pages_pool[:])
 
-        # Novelas / palavras-chave / gêneros de nicho: relaxar filtro de votos
-        if not results and (with_genres is not None or with_keywords is not None):
-            results, media_type = try_discover(media_type, 1, pages_pool[:])
-
-        # Ainda vazio com novela: tentar o outro tipo de mídia uma vez
         _has_novela = with_genres == SOAP_NOVELA_GENRE_ID or (
             isinstance(with_genres, str)
             and str(SOAP_NOVELA_GENRE_ID) in with_genres.split("|")
         )
-        if not results and _has_novela:
-            other = "movie" if media_type == "tv" else "tv"
-            results, media_type = try_discover(other, 1, pages_pool[:])
 
-        if not results and with_keywords == ANIME_KEYWORD_ID:
-            other = "movie" if media_type == "tv" else "tv"
-            results, media_type = try_discover(other, 1, pages_pool[:])
+        def full_discover_pass(start_mt: str) -> tuple[list[Any], str]:
+            """Uma passagem completa do pipeline discover (votos, novela, anime)."""
+            mt = start_mt
+            res, mt = try_discover(mt, 100, pages_pool[:])
+            if not res and (with_genres is not None or with_keywords is not None):
+                res, mt = try_discover(mt, 1, pages_pool[:])
+            if not res and _has_novela:
+                other = "movie" if mt == "tv" else "tv"
+                res, mt = try_discover(other, 1, pages_pool[:])
+            if not res and with_keywords == ANIME_KEYWORD_ID:
+                other = "movie" if mt == "tv" else "tv"
+                res, mt = try_discover(other, 1, pages_pool[:])
+            return res, mt
 
-        if not results:
+        excluded = _parse_exclude_drawn(body)
+
+        def pool_eligible(res_list: list[Any], mt: str) -> list[Any]:
+            pool: list[Any] = []
+            for it in res_list:
+                if not isinstance(it, dict):
+                    continue
+                mid_raw = it.get("id")
+                if mid_raw is None:
+                    continue
+                try:
+                    mid_i = int(mid_raw)
+                except (TypeError, ValueError):
+                    continue
+                if (str(mt), mid_i) in excluded:
+                    continue
+                pool.append(it)
+            return pool
+
+        item: dict[str, Any] | None = None
+        picked_mt: str | None = None
+        cur_mt = str(media_type)
+        last_nonempty: list[Any] | None = None
+        last_nonempty_mt: str | None = None
+        for _attempt in range(50):
+            results, cur_mt = full_discover_pass(cur_mt)
+            if not results:
+                break
+            last_nonempty, last_nonempty_mt = results, cur_mt
+            pool = pool_eligible(results, cur_mt)
+            if pool:
+                item = random.choice(pool)
+                picked_mt = cur_mt
+                break
+
+        if item is None:
+            if last_nonempty is None:
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                "Nenhum título encontrado com esses critérios. "
+                                "Tente outro gênero ou tipo."
+                            )
+                        }
+                    ),
+                    404,
+                )
             return (
                 jsonify(
                     {
-                        "error": "Nenhum título encontrado com esses critérios. Tente outro gênero ou tipo."
+                        "error": (
+                            "Nesta aba já sorteamos muitos títulos com esses filtros e "
+                            "não há candidatos novos agora. Recarregue a página para zerar "
+                            "o histórico ou mude gênero / tipo / lista."
+                        )
                     }
                 ),
                 404,
             )
 
-        item = random.choice(results)
         mid = item.get("id")
+        media_type = str(picked_mt or last_nonempty_mt or cur_mt)
         if mid is None:
             return jsonify({"error": "Resposta inválida"}), 502
 
@@ -3590,11 +4050,11 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             "cards": cards,
             "victories": victories_by_slug,
             "profile_a": {
-                "label": prof_a.display_name if prof_a else "Perfil A",
+                "label": prof_a.display_name if prof_a else "Princesinha",
                 "slug": "a",
             },
             "profile_b": {
-                "label": prof_b.display_name if prof_b else "Perfil B",
+                "label": prof_b.display_name if prof_b else "Gabe",
                 "slug": "b",
             },
         }
@@ -4271,18 +4731,18 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             (s.tmdb_id, s.media_type)
             for s in SwipeItem.query.filter(
                 SwipeItem.couple_id == swipe_cid,
-                SwipeItem.state.in_(("matched", "rejected")),
+                SwipeItem.state.in_(("matched", "rejected", "no_match")),
             ).all()
         }
 
     def _swipe_filter_deck_for_profile(deck: list[dict], profile: str) -> list[dict]:
-        """Cada perfil vê só cartas em que ainda pode agir (evita ficar preso após o próprio like)."""
+        """Cada perfil vê apenas cartas em que ainda pode agir (curtir/rejeitar 1x por pessoa)."""
         if profile not in ("a", "b"):
             profile = "a"
         out: list[dict] = []
         for c in deck:
             st = str(c.get("state") or "pending").lower()
-            if st in ("matched", "rejected"):
+            if st in ("matched", "rejected", "no_match"):
                 continue
             if st == "pending":
                 out.append(c)
@@ -4290,6 +4750,12 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 if profile == "b":
                     out.append(c)
             elif st == "liked_b":
+                if profile == "a":
+                    out.append(c)
+            elif st == "rejected_a":
+                if profile == "b":
+                    out.append(c)
+            elif st == "rejected_b":
                 if profile == "a":
                     out.append(c)
             else:
@@ -4326,8 +4792,16 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             )
             for tid, mt in keys
         ]
-        rows = SwipeItem.query.filter(or_(*conds)).all() if conds else []
-        mp = {(int(r.tmdb_id), str(r.media_type)): r.state for r in rows}
+        # SQLite pode falhar ou degradar com OR enorme; consultamos em blocos.
+        mp: dict[tuple[int, str], str] = {}
+        chunk = 28
+        for i in range(0, len(conds), chunk):
+            sub = conds[i : i + chunk]
+            if not sub:
+                continue
+            rows = SwipeItem.query.filter(or_(*sub)).all()
+            for r in rows:
+                mp[(int(r.tmdb_id), str(r.media_type))] = r.state
         for card in cards:
             try:
                 tid = int(card["tmdb_id"])
@@ -4354,6 +4828,34 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                     "media_type": wl.media_type,
                     "title": wl.title,
                     "poster_path": wl.poster_path,
+                    "state": "pending",
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+
+    def _build_swipe_custom_list_deck(
+        swipe_cid: int, list_id: int, excluded: set[tuple[int, str]], limit: int
+    ) -> list[dict]:
+        row = MediaList.query.filter_by(id=list_id, couple_id=swipe_cid).first()
+        if not row:
+            return []
+        out: list[dict] = []
+        for li in (
+            MediaListItem.query.filter_by(list_id=list_id)
+            .order_by(MediaListItem.added_at.asc(), MediaListItem.id.asc())
+            .limit(max(limit * 2, 40))
+        ):
+            key = (li.tmdb_id, li.media_type)
+            if key in excluded:
+                continue
+            out.append(
+                {
+                    "tmdb_id": li.tmdb_id,
+                    "media_type": li.media_type,
+                    "title": li.title,
+                    "poster_path": li.poster_path,
                     "state": "pending",
                 }
             )
@@ -4444,9 +4946,56 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                     return deck
         return deck[:limit]
 
-    def _sync_swipe_session_cursor(swipe_cid: int) -> None:
-        sess = SwipeSession.query.filter_by(couple_id=swipe_cid, active=True).first()
-        if not sess or not sess.deck_json:
+    def _swipe_profile_can_act_on_state(st: str, profile: str) -> bool:
+        """Alinhado a _swipe_filter_deck_for_profile: este perfil ainda pode curtir/recusar nesta carta?"""
+        s = (st or "pending").lower()
+        if profile not in ("a", "b"):
+            profile = "a"
+        if s in ("matched", "rejected", "no_match"):
+            return False
+        if s == "pending":
+            return True
+        if s == "liked_a":
+            return profile == "b"
+        if s == "liked_b":
+            return profile == "a"
+        if s == "rejected_a":
+            return profile == "b"
+        if s == "rejected_b":
+            return profile == "a"
+        return True
+
+    def _sess_cursor_for_profile(sess: SwipeSession, profile: str) -> int:
+        if profile == "b":
+            try:
+                return max(0, int(sess.cursor_index_b))
+            except (TypeError, ValueError):
+                return max(0, int(getattr(sess, "cursor_index", 0) or 0))
+        try:
+            return max(0, int(sess.cursor_index_a))
+        except (TypeError, ValueError):
+            return max(0, int(getattr(sess, "cursor_index", 0) or 0))
+
+    def _sess_set_cursor_for_profile(sess: SwipeSession, profile: str, i: int) -> None:
+        i = max(0, int(i))
+        if profile == "b":
+            sess.cursor_index_b = i
+        else:
+            sess.cursor_index_a = i
+        # Mantém coluna legada coerente com o “mais atrás” no deck (depuração / ferramentas).
+        try:
+            ca = int(sess.cursor_index_a)
+            cb = int(sess.cursor_index_b)
+            sess.cursor_index = min(ca, cb)
+        except (TypeError, ValueError):
+            sess.cursor_index = i
+
+    def _sync_swipe_session_cursor_one(
+        sess: SwipeSession, swipe_cid: int, profile: str
+    ) -> None:
+        if profile not in ("a", "b"):
+            profile = "a"
+        if not sess.deck_json:
             return
         try:
             deck_full = json.loads(sess.deck_json)
@@ -4454,7 +5003,8 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             return
         if not isinstance(deck_full, list):
             return
-        i = max(0, int(sess.cursor_index or 0))
+        i = _sess_cursor_for_profile(sess, profile)
+        i = max(0, min(i, len(deck_full)))
         while i < len(deck_full):
             c = deck_full[i]
             try:
@@ -4467,12 +5017,22 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 couple_id=swipe_cid, tmdb_id=tid, media_type=mt
             ).first()
             st = (row.state if row else "pending") or "pending"
-            if st in ("matched", "rejected"):
+            if st in ("matched", "rejected", "no_match"):
+                i += 1
+                continue
+            if not _swipe_profile_can_act_on_state(st, profile):
                 i += 1
                 continue
             break
-        sess.cursor_index = i
+        _sess_set_cursor_for_profile(sess, profile, i)
         sess.updated_at = datetime.utcnow()
+
+    def _sync_swipe_session_cursor(swipe_cid: int) -> None:
+        sess = SwipeSession.query.filter_by(couple_id=swipe_cid, active=True).first()
+        if not sess:
+            return
+        _sync_swipe_session_cursor_one(sess, swipe_cid, "a")
+        _sync_swipe_session_cursor_one(sess, swipe_cid, "b")
 
     def _swipe_session_json(
         swipe_cid: int, sess: SwipeSession, viewer_profile: str | None = None
@@ -4483,7 +5043,10 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             deck_full = []
         if not isinstance(deck_full, list):
             deck_full = []
-        cur = max(0, min(int(sess.cursor_index or 0), len(deck_full)))
+        prof = (viewer_profile or "").strip().lower()
+        if prof not in ("a", "b"):
+            prof = "a"
+        cur = max(0, min(_sess_cursor_for_profile(sess, prof), len(deck_full)))
         visible = [dict(x) for x in deck_full[cur:]]
         _swipe_attach_card_states(swipe_cid, visible)
         gids: list[int] = []
@@ -4492,19 +5055,20 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 p = p.strip()
                 if p.isdigit():
                     gids.append(int(p))
-        prof = (viewer_profile or "").strip().lower()
-        if prof not in ("a", "b"):
-            prof = "a"
         filtered = _swipe_filter_deck_for_profile(visible, prof)
         has_tail = cur < len(deck_full)
         session_waiting = bool(has_tail and not filtered and visible)
+        lid = getattr(sess, "list_id", None)
         return {
             "active": True,
             "source": sess.source,
             "media": sess.media,
             "genre_ids": gids,
+            "list_id": int(lid) if lid is not None else None,
             "deck": filtered,
             "cursor_index": cur,
+            "cursor_index_a": int(getattr(sess, "cursor_index_a", 0) or 0),
+            "cursor_index_b": int(getattr(sess, "cursor_index_b", 0) or 0),
             "deck_total": len(deck_full),
             "session_public_id": getattr(sess, "public_id", None) or "",
             "viewer_profile": prof,
@@ -4516,15 +5080,60 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
     def couple_swipe_page():
         return render_template("couple_swipe.html")
 
+    def _active_profile_slug_from_session() -> str | None:
+        slug = session.get("profile_slug")
+        if isinstance(slug, str):
+            s = slug.strip().lower()
+            if s in ("a", "b"):
+                return s
+        return None
+
     def _swipe_viewer_profile() -> str:
+        got = _active_profile_slug_from_session()
+        if got:
+            return got
         p = (request.args.get("profile") or "").strip().lower()
-        if p not in ("a", "b"):
-            p = "a"
-        return p
+        if p in ("a", "b"):
+            return p
+        return "a"
+
+    def _swipe_acting_profile() -> str:
+        got = _active_profile_slug_from_session()
+        if got:
+            return got
+        body = request.get_json(silent=True) or {}
+        p = (body.get("profile") or "").strip().lower()
+        if p in ("a", "b"):
+            return p
+        return "a"
+
+    @app.get("/api/active-profile")
+    def api_active_profile_get():
+        """Perfil do swipe/apostas: cookie de sessão (definido em Bem-vindo ou no header)."""
+        cid = _couple_id()
+        labels: dict[str, str] = {"a": "Princesinha", "b": "Gabe"}
+        try:
+            for row in Profile.query.filter_by(couple_id=cid).order_by(Profile.slug):
+                if row.slug in ("a", "b"):
+                    labels[row.slug] = row.display_name or labels.get(row.slug, row.slug)
+        except Exception:
+            pass
+        slug = _active_profile_slug_from_session()
+        return jsonify({"slug": slug, "labels": labels})
+
+    @app.post("/api/active-profile")
+    def api_active_profile_post():
+        body = request.get_json(silent=True) or {}
+        slug = (body.get("slug") or body.get("profile") or "").strip().lower()
+        if slug not in ("a", "b"):
+            return jsonify({"error": "slug deve ser a ou b"}), 400
+        session["profile_slug"] = slug
+        session.permanent = True
+        return jsonify({"ok": True, "slug": slug})
 
     @app.get("/api/swipe/sessions")
     def api_swipe_sessions_list():
-        """Lista sessões ativas do casal (hoje: no máx. uma linha por casal)."""
+        """Lista sessões ativas do casal (hoje: no máximo uma linha por casal)."""
         cid = _couple_id()
         prof = _swipe_viewer_profile()
         sess = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
@@ -4540,6 +5149,7 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                         "source": sess.source,
                         "media": sess.media,
                         "genre_ids": payload.get("genre_ids") or [],
+                        "list_id": payload.get("list_id"),
                         "deck_count": len(payload.get("deck") or []),
                         "session_waiting": payload.get("session_waiting"),
                         "deck_total": payload.get("deck_total"),
@@ -4573,15 +5183,26 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         try:
             body = request.get_json(silent=True) or {}
             source = (body.get("source") or "watchlater").strip().lower()
-            if source not in ("watchlater", "genre"):
+            if source not in ("watchlater", "genre", "list"):
                 return jsonify({"error": "source inválido"}), 400
             excluded = _swipe_swiped_out_keys(cid)
             genre_ids_csv = ""
+            deck_list_id_val: int | None = None
             media = (body.get("media") or "movie").strip()
             if media not in ("movie", "tv"):
                 media = "movie"
             if source == "watchlater":
                 deck = _build_swipe_watchlater_deck(cid, excluded, 100)
+            elif source == "list":
+                try:
+                    lid = int(body.get("list_id"))
+                except (TypeError, ValueError):
+                    return jsonify({"error": "list_id inválido"}), 400
+                deck = _build_swipe_custom_list_deck(cid, lid, excluded, 100)
+                if not deck:
+                    return jsonify({"error": "Lista vazia ou não encontrada."}), 400
+                deck_list_id_val = lid
+                media = "movie"
             else:
                 raw_ids = body.get("genre_ids")
                 parsed_ids: list[int] = []
@@ -4609,8 +5230,11 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                     source=source,
                     media=media if source == "genre" else None,
                     genre_ids_csv=genre_ids_csv if source == "genre" else "",
+                    list_id=deck_list_id_val,
                     deck_json=json.dumps(deck, ensure_ascii=False),
                     cursor_index=0,
+                    cursor_index_a=0,
+                    cursor_index_b=0,
                     public_id=new_public,
                     updated_at=datetime.utcnow(),
                 )
@@ -4620,25 +5244,26 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 sess.source = source
                 sess.media = media if source == "genre" else None
                 sess.genre_ids_csv = genre_ids_csv if source == "genre" else ""
+                sess.list_id = deck_list_id_val
                 sess.deck_json = json.dumps(deck, ensure_ascii=False)
                 sess.cursor_index = 0
+                sess.cursor_index_a = 0
+                sess.cursor_index_b = 0
                 sess.public_id = new_public
                 sess.updated_at = datetime.utcnow()
-            viewer = (body.get("viewer") or "").strip().lower()
-            if viewer not in ("a", "b"):
-                viewer = "a"
+            prof = _swipe_viewer_profile()
             db.session.commit()
             _sync_swipe_session_cursor(cid)
             db.session.commit()
             db.session.refresh(sess)
-            return jsonify(_swipe_session_json(cid, sess, viewer))
+            return jsonify(_swipe_session_json(cid, sess, prof))
         except Exception:
             current_app.logger.exception("api_swipe_session_start failed")
             db.session.rollback()
             return (
                 jsonify(
                     {
-                        "error": "Não foi possível criar a sessão de swipe. Tenta de novo daqui a pouco.",
+                        "error": "Não foi possível criar a sessão de swipe. Tente de novo daqui a pouco.",
                         "active": False,
                     }
                 ),
@@ -4657,8 +5282,18 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             deck = _build_swipe_watchlater_deck(cid, excluded, 20)
             return jsonify({"deck": _swipe_attach_card_states(cid, deck)})
 
+        if source == "list":
+            try:
+                lid = int(request.args.get("list_id") or 0)
+            except (TypeError, ValueError):
+                return jsonify({"error": "list_id inválido"}), 400
+            if lid <= 0:
+                return jsonify({"error": "list_id obrigatório"}), 400
+            deck = _build_swipe_custom_list_deck(cid, lid, excluded, 20)
+            return jsonify({"deck": _swipe_attach_card_states(cid, deck)})
+
         if source != "genre":
-            return jsonify({"error": "source inválido (watchlater|genre)"}), 400
+            return jsonify({"error": "source inválido (watchlater|genre|list)"}), 400
 
         media = (request.args.get("media") or "movie").strip()
         if media not in ("movie", "tv"):
@@ -4730,6 +5365,160 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
             )
         return jsonify({"items": items})
 
+    @app.get("/api/swipe/session/matches")
+    def api_swipe_session_matches():
+        """Histórico de matches da sessão ativa do swipe."""
+        cid = _couple_id()
+        sess = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
+        sid = (getattr(sess, "public_id", None) or "").strip() if sess else ""
+        if not sid:
+            return jsonify({"session_public_id": "", "items": []})
+        rows = (
+            SwipeSessionMatch.query.filter_by(
+                couple_id=cid, session_public_id=sid
+            )
+            .order_by(SwipeSessionMatch.id.desc())
+            .limit(80)
+            .all()
+        )
+        items = [
+            {
+                "id": int(r.id),
+                "tmdb_id": int(r.tmdb_id),
+                "media_type": r.media_type,
+                "title": r.title or "",
+                "poster_path": r.poster_path,
+                "created_at": (
+                    r.created_at.isoformat()
+                    if getattr(r, "created_at", None)
+                    else None
+                ),
+            }
+            for r in rows
+        ]
+        return jsonify({"session_public_id": sid, "items": items})
+
+    @app.get("/api/swipe/stream/<session_public_id>")
+    def api_swipe_stream(session_public_id: str):
+        """SSE: votos, matches e presença da sessão de swipe."""
+        cid = _couple_id()
+        sess = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
+        sid = (getattr(sess, "public_id", None) or "").strip() if sess else ""
+        want = (session_public_id or "").strip()
+        if not sess or not sid or sid != want:
+            return jsonify({"error": "sessão inválida"}), 404
+        profile = (request.args.get("profile") or "a").strip().lower()
+        if profile not in ("a", "b"):
+            profile = "a"
+
+        def event_stream():
+            q = sse_manager.subscribe(sid, profile)
+            try:
+                yield f"data: {json.dumps({'type': 'connected', 'profile': profile})}\n\n"
+                presence_service.update_presence(sid, profile)
+                presence_service.update_couple_presence(cid, profile)
+                sse_manager.broadcast(
+                    sid,
+                    {
+                        "type": "presence",
+                        "online": presence_service.get_presence(sid),
+                    },
+                )
+                while True:
+                    try:
+                        ev = q.get(timeout=25)
+                        yield f"data: {json.dumps(ev, default=str)}\n\n"
+                    except queue.Empty:
+                        presence_service.update_presence(sid, profile)
+                        presence_service.update_couple_presence(cid, profile)
+                        sse_manager.broadcast(
+                            sid,
+                            {
+                                "type": "presence",
+                                "online": presence_service.get_presence(sid),
+                            },
+                        )
+                        yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            finally:
+                sse_manager.unsubscribe(sid, q)
+
+        return Response(
+            event_stream(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    @app.get("/api/couple/stream")
+    def api_couple_stream():
+        """SSE global do casal (match fora do swipe, assistindo agora, etc.)."""
+        cid = _couple_id()
+        profile = (request.args.get("profile") or "a").strip().lower()
+        if profile not in ("a", "b"):
+            profile = "a"
+
+        def event_stream():
+            q = sse_manager.subscribe_couple(cid)
+            try:
+                yield f"data: {json.dumps({'type': 'connected', 'scope': 'couple'})}\n\n"
+                while True:
+                    try:
+                        ev = q.get(timeout=25)
+                        yield f"data: {json.dumps(ev, default=str)}\n\n"
+                    except queue.Empty:
+                        presence_service.update_couple_presence(cid, profile)
+                        yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            finally:
+                sse_manager.unsubscribe_couple(cid, q)
+
+        return Response(
+            event_stream(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    @app.get("/api/presence")
+    def api_presence():
+        """Presença do casal; toca o perfil atual (útil com polling no shell)."""
+        cid = _couple_id()
+        prof = _active_profile_slug_from_session()
+        if prof in ("a", "b"):
+            presence_service.update_couple_presence(cid, prof)
+        return jsonify({"online": presence_service.get_couple_presence(cid)})
+
+    @app.post("/api/activity/watching")
+    def api_activity_watching():
+        """Notifica o parceiro (via SSE do casal) que este perfil abriu/está vendo um título."""
+        cid = _couple_id()
+        body = request.get_json(silent=True) or {}
+        try:
+            tmdb_id = int(body.get("tmdb_id"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "tmdb_id inválido"}), 400
+        mt = (body.get("media_type") or "movie").strip()
+        if mt not in ("movie", "tv"):
+            mt = "movie"
+        title = (body.get("title") or "").strip() or "Sem título"
+        profile = _swipe_acting_profile()
+        sse_manager.broadcast_couple(
+            cid,
+            {
+                "type": "watching",
+                "profile": profile,
+                "title": title,
+                "tmdb_id": tmdb_id,
+                "media_type": mt,
+            },
+        )
+        return jsonify({"ok": True})
+
     @app.post("/api/swipe/action")
     def api_swipe_action():
         cid = _couple_id()
@@ -4741,16 +5530,16 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         mt = (body.get("media_type") or "").strip()
         if mt not in ("movie", "tv"):
             return jsonify({"error": "media_type inválido"}), 400
-        profile = (body.get("profile") or "a").strip().lower()
+        profile = _swipe_acting_profile()
         action = (body.get("action") or "").strip().lower()
-        if profile not in ("a", "b"):
-            profile = "a"
         if action not in ("like", "reject"):
             return jsonify({"error": "action deve ser like ou reject"}), 400
 
         row = SwipeItem.query.filter_by(
             couple_id=cid, tmdb_id=tid, media_type=mt
         ).first()
+        sess = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
+        session_public_id = (getattr(sess, "public_id", None) or "").strip() if sess else ""
         title = (body.get("title") or "").strip() or "Sem título"
         poster = (body.get("poster_path") or "").strip() or None
         if not row:
@@ -4761,16 +5550,47 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 title=title,
                 poster_path=poster,
                 state="pending",
+                vote_a="none",
+                vote_b="none",
+                last_session_public_id=session_public_id or None,
             )
             db.session.add(row)
             db.session.flush()
+        elif session_public_id:
+            row.last_session_public_id = session_public_id
+        if not row.title:
+            row.title = title
+        if not row.poster_path and poster:
+            row.poster_path = poster
         cur = row.state or "pending"
         new_state, err = transition_on_swipe(cur, profile, action)
         if err:
             return jsonify({"error": err, "state": cur}), 400
+        if profile == "a":
+            row.vote_a = "like" if action == "like" else "reject"
+        else:
+            row.vote_b = "like" if action == "like" else "reject"
         row.state = new_state
         row.updated_at = datetime.utcnow()
-        if gamification_v2_enabled() and new_state == "matched":
+        if new_state == "matched" and session_public_id:
+            if not SwipeSessionMatch.query.filter_by(
+                couple_id=cid,
+                session_public_id=session_public_id,
+                tmdb_id=tid,
+                media_type=mt,
+            ).first():
+                db.session.add(
+                    SwipeSessionMatch(
+                        couple_id=cid,
+                        session_public_id=session_public_id,
+                        tmdb_id=tid,
+                        media_type=mt,
+                        title=row.title,
+                        poster_path=row.poster_path,
+                        created_at=datetime.utcnow(),
+                    )
+                )
+        if gamification_v2_enabled() and new_state == "matched" and cur != "matched":
             db.session.add(
                 GamificationEvent(
                     couple_id=cid,
@@ -4780,6 +5600,7 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                             "tmdb_id": tid,
                             "media_type": mt,
                             "title": row.title,
+                            "session_public_id": session_public_id,
                         },
                         default=str,
                     ),
@@ -4789,6 +5610,44 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         db.session.commit()
         _sync_swipe_session_cursor(cid)
         db.session.commit()
+        sess_post = SwipeSession.query.filter_by(couple_id=cid, active=True).first()
+        spid = (getattr(sess_post, "public_id", None) or "").strip() if sess_post else ""
+        if spid:
+            presence_service.update_presence(spid, profile)
+            presence_service.update_couple_presence(cid, profile)
+            cur_a = int(getattr(sess_post, "cursor_index_a", 0) or 0)
+            cur_b = int(getattr(sess_post, "cursor_index_b", 0) or 0)
+            sse_manager.broadcast(
+                spid,
+                {
+                    "type": "vote",
+                    "profile": profile,
+                    "item_id": int(row.id),
+                    "tmdb_id": int(tid),
+                    "media_type": mt,
+                    "new_state": new_state,
+                    "cursor_a": cur_a,
+                    "cursor_b": cur_b,
+                },
+            )
+            sse_manager.broadcast(
+                spid,
+                {
+                    "type": "presence",
+                    "online": presence_service.get_presence(spid),
+                },
+            )
+            if new_state == "matched":
+                match_evt = {
+                    "type": "match",
+                    "item_id": int(row.id),
+                    "tmdb_id": int(tid),
+                    "media_type": mt,
+                    "title": row.title or "",
+                    "poster_path": row.poster_path,
+                }
+                sse_manager.broadcast(spid, match_evt)
+                sse_manager.broadcast_couple(cid, match_evt)
         return jsonify({"state": new_state})
 
     @app.get("/api/today")
@@ -5064,4 +5923,5 @@ if __name__ == "__main__":
         _port = int(os.environ.get("FLASK_RUN_PORT", "5055"))
     except ValueError:
         _port = 5055
-    app.run(host=_host, port=_port, debug=False)
+    # threaded=True: evita bloquear o processo com uma conexão SSE longa (dev).
+    app.run(host=_host, port=_port, debug=False, threaded=True)

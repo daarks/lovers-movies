@@ -138,15 +138,52 @@ a:hover {
   min-width: 0;
 }
 
-.site-header-greet {
+.site-header-right {
   grid-column: 3;
   justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  max-width: min(48vw, 13rem);
+}
+
+.site-header-partner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.15;
+}
+
+.site-header-partner-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.85);
+  flex-shrink: 0;
+}
+
+.site-header-partner-dot.is-online {
+  background: #4ade80;
+  box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.35);
+}
+
+.site-header-partner-label {
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-header-greet {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.05rem;
-  max-width: min(46vw, 12.5rem);
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -199,7 +236,9 @@ button.top-subnav-link--ghost:hover {
 @media (max-width: 380px) {
   .site-header-greet {
     font-size: 0.68rem;
-    max-width: 40vw;
+  }
+  .site-header-right {
+    max-width: 42vw;
   }
 }
 
@@ -2638,7 +2677,7 @@ dialog option {
   border-color: var(--purple);
 }
 
-/* Mesmo tratamento do sorteio aleatório (não partilhar classe com .sugg-toggle-btn — evita conflito no JS) */
+/* Mesmo tratamento do sorteio aleatório (não compartilhar classe com .sugg-toggle-btn — evita conflito no JS) */
 .sugg-kw-media-btn {
   flex: 1;
   padding: 0.55rem 1rem;
@@ -6178,6 +6217,7 @@ body:not(.page-home) .filter-modal-panel--glass {
 .suggestions-shell,
 .history-shell,
 .watch-later-shell,
+.listas-shell,
 .calendar-shell,
 .stats-shell,
 .swipe-shell,
@@ -6204,6 +6244,7 @@ body:not(.page-home) .filter-modal-panel--glass {
 .suggestions-shell-fallback,
 .history-shell-fallback,
 .watch-later-shell-fallback,
+.listas-shell-fallback,
 .calendar-shell-fallback,
 .stats-shell-fallback,
 .swipe-shell-fallback,
@@ -6294,6 +6335,7 @@ body:not(.page-home) :focus-visible {
   .suggestions-shell-fallback,
   .history-shell-fallback,
   .watch-later-shell-fallback,
+  .listas-shell-fallback,
   .calendar-shell-fallback,
   .stats-shell-fallback,
   .swipe-shell-fallback,
