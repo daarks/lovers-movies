@@ -1,20 +1,36 @@
-/* Service Worker — estáticos cache-first; HTML/API network-first com fallback */
-/* v3-premium.3: corrige ciclo ESM vendor-react/vendor-baseui agrupando em vendor-ui. */
-var STATIC_CACHE = "nossa-lista-static-v3-premium-3";
-var RUNTIME_CACHE = "nossa-lista-runtime-v3-premium-3";
+/* Service Worker — PWA: escopo /; estáticos em cache; API e HTML sem cache de dados. */
+/* v4-pwa.2: ícone PWA (claquete) e botão Instalar no drawer. */
+var STATIC_CACHE = "nossa-lista-static-v4-pwa-2";
 var PRECACHE_URLS = [
   "/static/style.css",
   "/static/app.js",
   "/static/favicon.svg",
   "/static/manifest.webmanifest",
-  "/static/offline.html"
+  "/static/offline.html",
+  "/static/pwa-192.png",
+  "/static/pwa-512.png"
 ];
 
-/* Assets versionados pelo Vite (/static/build/assets/*.[hash].js) mudam
-   de hash a cada build; tratamos como "stale-while-revalidate" para
-   sobrescrever bundles antigos sem quebrar offline. */
 function isViteBuildAsset(url) {
   return url.pathname.indexOf("/static/build/") === 0;
+}
+
+function isStaticAsset(url) {
+  return url.pathname.indexOf("/static/") === 0;
+}
+
+function isApiOrSuggestionsPath(url) {
+  var p = url.pathname;
+  return (
+    p.indexOf("/search") === 0 ||
+    p.indexOf("/api/") === 0 ||
+    p.indexOf("/suggestions") === 0
+  );
+}
+
+function wantsHtml(req) {
+  var a = req.headers.get("accept");
+  return a && a.indexOf("text/html") !== -1;
 }
 
 self.addEventListener("install", function (event) {
@@ -31,7 +47,7 @@ self.addEventListener("activate", function (event) {
     caches.keys().then(function (keys) {
       return Promise.all(
         keys
-          .filter(function (k) { return k !== STATIC_CACHE && k !== RUNTIME_CACHE; })
+          .filter(function (k) { return k !== STATIC_CACHE; })
           .map(function (k) { return caches.delete(k); })
       );
     })
@@ -39,24 +55,11 @@ self.addEventListener("activate", function (event) {
   self.clients.claim();
 });
 
-function isStaticAsset(url) {
-  return url.pathname.indexOf("/static/") === 0;
-}
-
-function isApiOrSearch(url) {
-  var p = url.pathname;
-  return (
-    p.indexOf("/search") === 0 ||
-    p.indexOf("/api/") === 0 ||
-    p.indexOf("/suggestions") === 0
-  );
-}
-
 self.addEventListener("fetch", function (event) {
   var req = event.request;
   if (req.method !== "GET") return;
   var url = new URL(req.url);
-  if (url.origin !== location.origin) return;
+  if (url.origin !== self.location.origin) return;
 
   if (isViteBuildAsset(url)) {
     event.respondWith(
@@ -96,22 +99,22 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
-  if (isApiOrSearch(url) || req.headers.get("accept") && req.headers.get("accept").indexOf("text/html") !== -1) {
+  /* API, busca e /suggestions: só rede (sem cache de JSON; SSE e streams passam direto). */
+  if (isApiOrSuggestionsPath(url)) {
+    event.respondWith(fetch(req));
+    return;
+  }
+
+  /* Páginas HTML: rede; se falhar, offline.html (sem guardar respostas dinâmicas no cache). */
+  if (wantsHtml(req)) {
     event.respondWith(
-      fetch(req)
-        .then(function (res) {
-          var copy = res.clone();
-          caches.open(RUNTIME_CACHE).then(function (c) {
-            if (res.ok) c.put(req, copy);
-          });
-          return res;
-        })
-        .catch(function () {
-          return caches.match(req).then(function (hit) {
-            return hit || caches.match("/static/offline.html");
-          });
-        })
+      fetch(req).catch(function () {
+        return caches.match("/static/offline.html");
+      })
     );
     return;
   }
+
+  /* Demais GET (ex.: raros tipos) — rede direta. */
+  event.respondWith(fetch(req));
 });

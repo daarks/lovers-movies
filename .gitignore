@@ -9,3 +9,5 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 app/static/build/
+# cloudflared descarregado por deploy/local-host-up.sh (linux-amd64)
+deploy/.cloudflared/

@@ -345,6 +345,22 @@ button.top-subnav-link--ghost:hover {
   flex-shrink: 0;
 }
 
+.nav-drawer-install-btn {
+  width: 100%;
+  border: 1px solid rgba(147, 51, 234, 0.45);
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.22), rgba(107, 33, 168, 0.35));
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.nav-drawer-install-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 body.nav-drawer-open {
   overflow: hidden;
 }

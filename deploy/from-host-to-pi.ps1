@@ -6,7 +6,7 @@
 
   Padrões (sobrescreva com variáveis de ambiente):
     MOVIES_APP_SSH          = gabeevi@raspberrypi.local
-    MOVIES_APP_REMOTE_DIR   = /home/pi/lovers-movies
+    MOVIES_APP_REMOTE_DIR   = /home/gabeevi/lovers-movies
     MOVIES_APP_SSH_EXTRA    = ex.: -i C:\Users\Voce\.ssh\id_rsa
 
   Uso (PowerShell, na raiz do repositório):
@@ -97,7 +97,7 @@ if ($env:MOVIES_APP_SSH_EXTRA) {
   if ($extra.Count -gt 0) { $SshOpts = $SshOpts + $extra }
 }
 
-$RDir = if ($env:MOVIES_APP_REMOTE_DIR) { $env:MOVIES_APP_REMOTE_DIR.Trim().TrimEnd("/", "\") } else { "/home/pi/lovers-movies" }
+$RDir = if ($env:MOVIES_APP_REMOTE_DIR) { $env:MOVIES_APP_REMOTE_DIR.Trim().TrimEnd("/", "\") } else { "/home/gabeevi/lovers-movies" }
 
 # --- Ferramentas no Windows ---
 Test-CommandOrPause -Nome "ssh" -TextoAjuda @(
@@ -339,5 +339,5 @@ if ($piHost -eq "0.0.0.0" -or $piHost -eq "*") {
 }
 Write-Host ""
 Write-Host "Variáveis úteis:"
-Write-Host '  $env:MOVIES_APP_SSH = "pi@192.168.1.x"'
-Write-Host '  $env:MOVIES_APP_REMOTE_DIR = "/home/pi/lovers-movies"'
+Write-Host '  $env:MOVIES_APP_SSH = "gabeevi@192.168.1.x"'
+Write-Host '  $env:MOVIES_APP_REMOTE_DIR = "/home/gabeevi/lovers-movies"'

@@ -145,6 +145,107 @@ function ToastBridge() {
   return null;
 }
 
+/** Botão "Instalar app" no drawer: usa beforeinstallprompt (Android/Chrome/Edge desktop)
+ *  e, em iOS Safari, mostra um toast explicando o fluxo manual (Compartilhar → Tela de início). */
+function InstallPromptBridge() {
+  const { toast } = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  useEffect(() => {
+    const item = document.getElementById("nav-drawer-install-item");
+    const btn = document.getElementById("nav-drawer-install-btn") as HTMLButtonElement | null;
+    if (!item || !btn) return;
+
+    type BIPEvent = Event & {
+      prompt: () => Promise<void>;
+      userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+    };
+    let deferred: BIPEvent | null = null;
+
+    const isStandalone =
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      (navigator as any).standalone === true;
+
+    const ua = navigator.userAgent || "";
+    const isIOSSafari = /iP(hone|od|ad)/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua);
+
+    const show = () => {
+      item.hidden = false;
+      btn.disabled = false;
+    };
+    const hide = () => {
+      item.hidden = true;
+    };
+
+    if (isStandalone) {
+      hide();
+      return;
+    }
+
+    const onBIP = (e: Event) => {
+      e.preventDefault();
+      deferred = e as BIPEvent;
+      show();
+    };
+
+    const onInstalled = () => {
+      deferred = null;
+      hide();
+      toastRef.current({ title: "App instalado!", kind: "success" });
+    };
+
+    const onClick = async () => {
+      if (deferred) {
+        try {
+          btn.disabled = true;
+          await deferred.prompt();
+          const choice = await deferred.userChoice;
+          if (choice.outcome !== "accepted") {
+            btn.disabled = false;
+          } else {
+            hide();
+          }
+        } catch {
+          btn.disabled = false;
+        } finally {
+          deferred = null;
+        }
+        return;
+      }
+      if (isIOSSafari) {
+        toastRef.current({
+          title: "Para instalar no iPhone",
+          description: "Toque em Compartilhar e depois 'Adicionar à Tela de Início'.",
+          kind: "info",
+          duration: 7000,
+        });
+        return;
+      }
+      toastRef.current({
+        title: "Instalação não disponível agora",
+        description: "Abra o site no Chrome ou Edge e navegue um pouco antes — só depois disso o navegador costuma liberar a instalação.",
+        kind: "info",
+        duration: 6000,
+      });
+    };
+
+    window.addEventListener("beforeinstallprompt", onBIP as EventListener);
+    window.addEventListener("appinstalled", onInstalled);
+    btn.addEventListener("click", onClick);
+
+    if (isIOSSafari) show();
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBIP as EventListener);
+      window.removeEventListener("appinstalled", onInstalled);
+      btn.removeEventListener("click", onClick);
+    };
+  }, []);
+
+  return null;
+}
+
 /** SSE do casal: match fora da página de swipe e evento "assistindo". */
 function CoupleEventStreamBridge() {
   const { toast } = useToast();
@@ -256,6 +357,7 @@ export default function AppShell() {
       <BottomNavIndicator />
       <DrawerEnhancer />
       <ToastBridge />
+      <InstallPromptBridge />
       <CoupleEventStreamBridge />
       <AnimatePresence>
         {reduce ? null : (

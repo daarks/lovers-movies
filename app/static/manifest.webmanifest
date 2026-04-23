@@ -1,18 +1,44 @@
 {
+  "id": "/?source=pwa",
   "name": "Nossa Lista — Filmes & Séries",
   "short_name": "Nossa Lista",
   "description": "Filmes e séries para casal: lista, swipe e o que assistir hoje.",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0f0a1a",
   "theme_color": "#6B21A8",
   "lang": "pt-BR",
   "icons": [
     {
+      "src": "/static/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/static/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "/static/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }

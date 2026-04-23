@@ -1,0 +1,24 @@
+# Referência: o deploy/from-host-to-pi.sh gera este unit em /etc/systemd/system/
+# com ExecStart apontando para <repo>/deploy/.cloudflared/cloudflared (arm64).
+# HTTPS público via Cloudflare Quick Tunnel (sem domínio próprio).
+# O túnel fala com 127.0.0.1:PORTA (a mesma porta que FLASK_BIND em /etc/movies-app.env).
+#
+# Arranque manual (sem reinstalar pelo PC): ver deploy/pi-remote-cloudflared.sh
+# ou: ./deploy/cloudflared-tunnel.sh http://127.0.0.1:8080
+#
+# Logs: sudo journalctl -u movies-app-cloudflared -f
+
+[Unit]
+Description=Cloudflare Quick Tunnel (HTTPS) para Nossa Lista (Gunicorn)
+After=network-online.target movies-app.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gabeevi
+ExecStart=/CAMINHO/ABSOLUTO/NA/PI/lovers-movies/deploy/.cloudflared/cloudflared tunnel --url http://127.0.0.1:8080
+Restart=on-failure
+RestartSec=8
+
+[Install]
+WantedBy=multi-user.target

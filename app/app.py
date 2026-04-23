@@ -20,13 +20,17 @@ from flask import (
     abort,
     current_app,
     g,
+    has_request_context,
     jsonify,
     redirect,
     render_template,
     request,
+    send_from_directory,
     session,
     url_for,
 )
+from flask.sessions import SecureCookieSessionInterface
+from werkzeug.middleware.proxy_fix import ProxyFix
 from markupsafe import Markup
 from flask_caching import Cache
 from sqlalchemy import and_, desc, func, inspect, or_, text
@@ -62,6 +66,7 @@ from services.structured_logging import IntegrationTimer
 from services import presence as presence_service
 from services.sse_manager import sse_manager
 from services.swipe_fsm import transition_on_swipe
+from services.swipe_session_reset import reset_swipe_items_for_new_session_deck
 from services.http_resilience import request_with_retry
 from services.tmdb_cached import tmdb_get_json_cached
 from services.trivia_wiki import fetch_wikipedia_summary
@@ -98,6 +103,15 @@ INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
 
 cache = Cache()
 _TMDB_SESSION = requests.Session()
+
+
+class _SessionCookieByRequestIsSecure(SecureCookieSessionInterface):
+    """Cookie de sessão Secure só com HTTPS (ou X-Forwarded-Proto via ProxyFix)."""
+
+    def get_cookie_secure(self, app) -> bool:
+        if has_request_context():
+            return bool(request.is_secure)
+        return bool(app.config.get("SESSION_COOKIE_SECURE", False))
 
 
 def _parse_exclude_drawn(body: dict[str, Any]) -> set[tuple[str, int]]:
@@ -1137,6 +1151,11 @@ def create_app() -> Flask:
         _cache_cfg["CACHE_DIR"] = str(_cdir)
     cache.init_app(app, config=_cache_cfg)
 
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1
+    )
+    app.session_interface = _SessionCookieByRequestIsSecure()
+
     app.extensions["metrics"] = {"tmdb_hit": 0, "tmdb_miss": 0}
 
     if not logging.getLogger().handlers:
@@ -1202,6 +1221,22 @@ def create_app() -> Flask:
             "profile_label_a": labels["a"],
             "profile_label_b": labels["b"],
         }
+
+    @app.get("/sw.js")
+    def service_worker():
+        """PWA: serve o SW na raiz com Service-Worker-Allowed: / (ficheiro em static/sw.js)."""
+        static_dir = app.static_folder
+        if not static_dir:
+            abort(404)
+        resp = send_from_directory(
+            static_dir,
+            "sw.js",
+            mimetype="application/javascript; charset=utf-8",
+            max_age=0,
+        )
+        resp.headers["Service-Worker-Allowed"] = "/"
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
 
     def _tmdb_json_cached(url, params, ttl, timeout=16.0, op="GET"):
         tok = os.environ.get("TMDB_READ_ACCESS_TOKEN")
@@ -5251,6 +5286,7 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
                 sess.cursor_index_b = 0
                 sess.public_id = new_public
                 sess.updated_at = datetime.utcnow()
+            reset_swipe_items_for_new_session_deck(cid, deck, new_public)
             prof = _swipe_viewer_profile()
             db.session.commit()
             _sync_swipe_session_cursor(cid)

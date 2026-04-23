@@ -8,7 +8,7 @@ from services.swipe_fsm import transition_on_swipe
     [
         ("pending", "a", "like", "liked_a"),
         ("pending", "b", "like", "liked_b"),
-        ("pending", "a", "reject", "rejected"),
+        ("pending", "a", "reject", "rejected_a"),
         ("liked_a", "b", "like", "matched"),
         ("liked_b", "a", "like", "matched"),
         ("liked_a", "a", "like", None),

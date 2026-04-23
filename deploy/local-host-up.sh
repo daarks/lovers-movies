@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 #
-# No seu PC (host): cria/atualiza o venv Python, compila o frontend (Vite) e
-# sobe o app com Gunicorn — mesmo fluxo mental do install-rpi.sh, sem systemd.
+# No seu PC (host): cria/atualiza o venv Python, compila o frontend (Vite),
+# valida arquivos PWA em app/static/, verifica sintaxe de app.py e sobe o app
+# com Gunicorn (gthread) — mesmo fluxo mental do install-rpi.sh, sem systemd.
+#
+# PWA: o service worker é servido em /sw.js (Flask); em HTTP puro o Chrome pode
+# não oferecer “Instalar”. Sem domínio próprio, o modo mais simples é HTTPS via
+# Cloudflare Quick Tunnel (cloudflared) — ativo por padrão (USE_CLOUDFLARE_TUNNEL=1).
+# Se não houver cloudflared no PATH, baixa linux-amd64 para deploy/.cloudflared/.
+# Para só HTTP local: USE_CLOUDFLARE_TUNNEL=0 ./deploy/local-host-up.sh
+# Com domínio + Nginx: deploy/nginx-https.example.conf
 #
 # Uso (na raiz do repo, sem sudo):
 #   ./deploy/local-host-up.sh
 #
-# Pré-requisito: secrets.env na raiz (copie de secrets.example).
+# Pré-requisito: secrets.env na raiz (copie a partir de secrets.example).
 #
 # Variáveis opcionais (além das do secrets.env):
 #   SKIP_FRONTEND=1     não roda npm ci / npm run build
 #   SKIP_PIP=1          não roda pip install -r requirements.txt
 #   FLASK_BIND          padrão se ausente em secrets.env: 0.0.0.0:8080
+#   USE_CLOUDFLARE_TUNNEL=0  não inicia cloudflared (só Gunicorn em HTTP)
 #
 # Flags:
 #   --skip-frontend   equivalente a SKIP_FRONTEND=1
@@ -27,12 +36,35 @@ CYN='\033[0;36m'
 RST='\033[0m'
 
 die() { echo -e "${RED}Erro:${RST} $*" >&2; exit 1; }
-info() { echo -e "${GRN}→${RST} $*"; }
-warn() { echo -e "${YLW}!${RST} $*"; }
+# Mensagens em stderr: funções usadas dentro de $() não podem poluir stdout (ex.: caminho do cloudflared).
+info() { echo -e "${GRN}→${RST} $*" >&2; }
+warn() { echo -e "${YLW}!${RST} $*" >&2; }
+
+# cloudflared no PATH → baixa linux-amd64 para deploy/.cloudflared/ (PC host).
+_resolve_cloudflared_for_host() {
+  local bin="$DEPLOY_DIR/.cloudflared/cloudflared"
+  if command -v cloudflared >/dev/null 2>&1; then
+    command -v cloudflared
+    return 0
+  fi
+  mkdir -p "$DEPLOY_DIR/.cloudflared"
+  if [[ -x "$bin" ]]; then
+    echo "$bin"
+    return 0
+  fi
+  command -v curl >/dev/null 2>&1 || die "USE_CLOUDFLARE_TUNNEL=1: instale curl ou coloque cloudflared no PATH."
+  _arch="$(uname -m 2>/dev/null || echo unknown)"
+  [[ "$_arch" == "x86_64" ]] || warn "Host não é x86_64 (é ${_arch}) — o script baixa mesmo assim cloudflared-linux-amd64."
+  info "Baixando cloudflared (linux-amd64) para $bin …"
+  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o "${bin}.part"
+  chmod +x "${bin}.part"
+  mv -f "${bin}.part" "$bin"
+  echo "$bin"
+}
 
 usage() {
   cat <<'EOF'
-Compila o frontend, prepara o venv em app/.venv e sobe Gunicorn neste PC.
+Compila o frontend, valida PWA (sw, manifest, PNG), prepara o venv e sobe o Gunicorn.
 
 Uso:
   ./deploy/local-host-up.sh [opções]
@@ -48,6 +80,7 @@ Opções:
 Variáveis de ambiente:
   SKIP_FRONTEND=1   mesmo que --skip-frontend
   SKIP_PIP=1        mesmo que --skip-pip
+  USE_CLOUDFLARE_TUNNEL=0  só HTTP (sem túnel HTTPS Cloudflare)
 EOF
 }
 
@@ -121,11 +154,30 @@ print_urls_banner() {
     echo "  (Bind ${host_part} — só escuta nesse endereço; ajuste FLASK_BIND em secrets.env para 0.0.0.0:${port} se quiser a LAN.)"
   fi
   echo ""
+  echo -e "${YLW}PWA / Chrome “Instalar app”:${RST}"
+  echo "  • Abre o site normalmente (ex.: http://127.0.0.1:${port} ou o IP da LAN) — é a página principal, não o URL do sw.js."
+  echo "  • No Chrome (PC ou Android): menu ⋮ → “Instalar Nossa Lista…” ou ícone de instalar na barra de endereços — só costuma aparecer em HTTPS (ou em http://127.0.0.1)."
+  echo "  • Em http://IP-na-LAN:8080 (só HTTP) o Chrome muitas vezes NÃO oferece instalar; aí você precisa de HTTPS (este script tenta cloudflared por padrão; ver deploy/nginx-https.example.conf para Nginx + domínio)."
+  echo -e "  • Para testar o SW: ${CYN}http://127.0.0.1:${port}/sw.js${RST} (arquivo do worker; não é a “home” do site)."
+  echo ""
 }
 
 load_env_from_secrets
 export MOVIES_APP_DIR="$APP_DIR"
 chmod +x "$DEPLOY_DIR/start-gunicorn.sh" 2>/dev/null || true
+
+# Arquivos PWA esperados em app/static/ (além do build Vite em static/build/)
+verify_pwa_static() {
+  local f
+  for f in sw.js manifest.webmanifest pwa-192.png pwa-512.png; do
+    [[ -f "$APP_DIR/static/$f" ]] || die "PWA: falta $APP_DIR/static/$f (precisa estar no repositório)."
+  done
+  if [[ -f "$APP_DIR/static/offline.html" ]]; then
+    : # opcional
+  else
+    warn "PWA: offline.html ausente em app/static/ (opcional mas recomendado)."
+  fi
+}
 
 # --- Python venv ---
 if [[ ! -d "$APP_DIR/.venv" ]]; then
@@ -157,11 +209,68 @@ else
   [[ -f "$APP_DIR/static/build/manifest.json" ]] || die "manifest.json ausente — faça o build do frontend ou rode sem --skip-frontend."
 fi
 
+info "Validando arquivos PWA (sw.js, manifest, ícones)…"
+verify_pwa_static
+
+_PY="$APP_DIR/.venv/bin/python"
+[[ -x "$_PY" ]] || _PY=python3
+info "Verificando sintaxe de app.py (py_compile)…"
+"$_PY" -m py_compile "$APP_DIR/app.py" || die "app.py com erro de sintaxe — corrija antes de subir o Gunicorn."
+
 cd "$APP_DIR"
-print_urls_banner
 
 # Reusa o mesmo script usado pelo systemd na Pi (gthread + GUNICORN_THREADS).
 # SSE precisa de gthread senão uma conexão longa bloqueia o worker síncrono
 # e o resto do site congela até o stream fechar.
 export GUNICORN_THREADS="${GUNICORN_THREADS:-4}"
-exec "$DEPLOY_DIR/start-gunicorn.sh"
+
+USE_CLOUDFLARE_TUNNEL="${USE_CLOUDFLARE_TUNNEL:-1}"
+_bind="${FLASK_BIND:-0.0.0.0:8080}"
+_cf_port="${_bind##*:}"
+[[ "$_cf_port" == "$_bind" ]] && _cf_port="8080"
+
+_gunicorn_cleanup() {
+  if [[ -n "${_GUNICORN_BG_PID:-}" ]] && kill -0 "$_GUNICORN_BG_PID" 2>/dev/null; then
+    kill "$_GUNICORN_BG_PID" 2>/dev/null || true
+    wait "$_GUNICORN_BG_PID" 2>/dev/null || true
+  fi
+}
+
+_wait_gunicorn_ready() {
+  local p="$1" n=0
+  while [[ $n -lt 80 ]]; do
+    if command -v curl >/dev/null 2>&1; then
+      if curl -sf "http://127.0.0.1:${p}/healthz" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif bash -c "echo >/dev/tcp/127.0.0.1/${p}" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.25
+    n=$((n + 1))
+  done
+  return 1
+}
+
+if [[ "$USE_CLOUDFLARE_TUNNEL" == "1" ]]; then
+  _CF_EXE="$(_resolve_cloudflared_for_host)"
+  print_urls_banner
+  info "Gunicorn em segundo plano + túnel HTTPS grátis (Cloudflare Quick Tunnel)…"
+  trap _gunicorn_cleanup EXIT INT TERM
+  ( export MOVIES_APP_DIR="$APP_DIR" && "$DEPLOY_DIR/start-gunicorn.sh" ) &
+  _GUNICORN_BG_PID=$!
+  if ! _wait_gunicorn_ready "$_cf_port"; then
+    warn "Gunicorn não respondeu a tempo em 127.0.0.1:${_cf_port}/healthz — verifique FLASK_BIND e os logs."
+  fi
+  echo ""
+  echo -e "${GRN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
+  echo -e "${GRN}  Link final para você acessar com o Cloudflare (HTTPS público):${RST}"
+  echo -e "${CYN}  (o endereço https://….trycloudflare.com aparece nas próximas linhas — copie quando surgir)${RST}"
+  echo -e "${YLW}  Nota:${RST} no modo quick o URL muda a cada reinício do túnel; URL fixo exige conta/domínio na Cloudflare."
+  echo -e "${GRN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
+  echo ""
+  "$_CF_EXE" tunnel --url "http://127.0.0.1:${_cf_port}"
+else
+  print_urls_banner
+  exec "$DEPLOY_DIR/start-gunicorn.sh"
+fi

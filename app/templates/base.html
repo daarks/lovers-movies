@@ -9,6 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}Nossa Lista{% endblock %} — Filmes & Séries</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='pwa-192.png') }}">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,6 +40,12 @@
       {% if bets_enabled_nav %}
       <li><a href="{{ url_for('bets_list_page') }}" class="nav-drawer-link nav-preserve-scroll"><span class="nav-drawer-emoji" aria-hidden="true">🎯</span> Apostas</a></li>
       {% endif %}
+      <li class="nav-drawer-install" id="nav-drawer-install-item" hidden>
+        <button type="button" class="nav-drawer-link nav-drawer-install-btn" id="nav-drawer-install-btn">
+          <span class="nav-drawer-emoji" aria-hidden="true">📲</span>
+          <span class="nav-drawer-install-label">Instalar app</span>
+        </button>
+      </li>
     </ul>
   </nav>
 
@@ -105,7 +112,9 @@
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", function () {
-        navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}").catch(function () {});
+        navigator.serviceWorker
+          .register("{{ url_for('service_worker') }}", { scope: "{{ (request.script_root or '') + '/' }}" })
+          .catch(function () {});
       });
     }
   </script>
