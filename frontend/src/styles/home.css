@@ -80,6 +80,7 @@
    ========================================================= */
 .home-search {
   position: relative;
+  z-index: calc(var(--rx-z-autocomplete) + 2);
   margin-top: var(--rx-space-4);
   display: flex;
   align-items: center;
@@ -129,7 +130,7 @@
   left: 0;
   right: 0;
   top: calc(100% + 8px);
-  z-index: var(--rx-z-autocomplete);
+  z-index: calc(var(--rx-z-autocomplete) + 3);
 }
 .home-search-dropdown {
   background: var(--rx-glass-elevated);
@@ -141,6 +142,10 @@
   -webkit-backdrop-filter: blur(var(--rx-glass-blur-lg)) saturate(var(--rx-glass-saturate));
   max-height: min(60vh, 520px);
   overflow: auto;
+}
+.home-hero-actions {
+  position: relative;
+  z-index: 1;
 }
 .home-search-row {
   display: flex;

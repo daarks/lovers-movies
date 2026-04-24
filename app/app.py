@@ -5434,6 +5434,48 @@ Responda APENAS com um JSON válido, sem markdown, sem texto antes ou depois, ne
         ]
         return jsonify({"session_public_id": sid, "items": items})
 
+    @app.get("/api/swipe/card-meta")
+    def api_swipe_card_meta():
+        """Metadados compactos para o card do swipe (sinopse + 3 nomes de elenco)."""
+        mt = (request.args.get("media_type") or "").strip().lower()
+        if mt not in ("movie", "tv"):
+            return jsonify({"error": "media_type inválido"}), 400
+        try:
+            tid = int(request.args.get("tmdb_id") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": "tmdb_id inválido"}), 400
+        if tid <= 0:
+            return jsonify({"error": "tmdb_id inválido"}), 400
+        token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
+        if not token:
+            return jsonify({"overview": "", "cast_top": []})
+        url = f"{TMDB_BASE}/{mt}/{tid}"
+        params = {"language": TMDB_LANG, "append_to_response": "credits"}
+        data = _tmdb_json_cached(
+            url,
+            params,
+            ttl=21600,
+            timeout=14.0,
+            op="swipe_card_meta",
+        )
+        if not isinstance(data, dict):
+            return jsonify({"overview": "", "cast_top": []})
+        overview = (data.get("overview") or "").strip()
+        credits = data.get("credits") or {}
+        cast_raw = credits.get("cast") or []
+        cast_sorted = sorted(cast_raw, key=_cast_billing_order)
+        cast_top: list[str] = []
+        seen: set[str] = set()
+        for p in cast_sorted:
+            nm = (p.get("name") or "").strip()
+            if not nm or nm in seen:
+                continue
+            seen.add(nm)
+            cast_top.append(nm)
+            if len(cast_top) >= 3:
+                break
+        return jsonify({"overview": overview, "cast_top": cast_top})
+
     @app.get("/api/swipe/stream/<session_public_id>")
     def api_swipe_stream(session_public_id: str):
         """SSE: votos, matches e presença da sessão de swipe."""

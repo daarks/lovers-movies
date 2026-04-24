@@ -37,6 +37,11 @@ interface DeckCard {
   state?: string;
 }
 
+interface SwipeCardMeta {
+  overview: string;
+  cast_top: string[];
+}
+
 interface SessionPayload {
   active: boolean;
   source?: string;
@@ -208,6 +213,14 @@ function SwipeDeck() {
   const [pendingSession, setPendingSession] = useState<SessionPayload | null>(null);
   /** Sessão ativa mas fila deste perfil vazia (ex.: outro já curtiu — aguardando resposta). */
   const [sessionWaitOnly, setSessionWaitOnly] = useState(false);
+  const [cardMetaMap, setCardMetaMap] = useState<Record<string, SwipeCardMeta>>({});
+  const cardMetaCacheRef = useRef<Map<string, SwipeCardMeta>>(new Map());
+  const cardMetaInFlightRef = useRef<Set<string>>(new Set());
+  const [cardMetaFetch, setCardMetaFetch] = useState<{ key: string; status: "idle" | "loading" | "error" }>({
+    key: "",
+    status: "idle",
+  });
+  const [cardMetaExpanded, setCardMetaExpanded] = useState(false);
 
   useEffect(() => {
     gateRef.current = gate;
@@ -766,6 +779,70 @@ function SwipeDeck() {
   }, [matchOverlay]);
 
   const current = deck[idx];
+  const currentKey = current ? `${current.media_type}:${current.tmdb_id}` : "";
+  const currentMeta = currentKey
+    ? cardMetaMap[currentKey] ?? cardMetaCacheRef.current.get(currentKey)
+    : undefined;
+  const currentMetaLoading =
+    !!currentKey && cardMetaFetch.key === currentKey && cardMetaFetch.status === "loading";
+  const currentMetaError =
+    !!currentKey && cardMetaFetch.key === currentKey && cardMetaFetch.status === "error";
+
+  useEffect(() => {
+    setCardMetaExpanded(false);
+  }, [currentKey]);
+
+  const ensureCardMeta = useCallback(async (card: DeckCard) => {
+    const k = `${card.media_type}:${card.tmdb_id}`;
+    if (cardMetaCacheRef.current.has(k)) {
+      setCardMetaFetch((prev) =>
+        prev.key === k && prev.status !== "idle" ? { key: k, status: "idle" } : prev,
+      );
+      return;
+    }
+    if (cardMetaInFlightRef.current.has(k)) {
+      setCardMetaFetch({ key: k, status: "loading" });
+      return;
+    }
+    cardMetaInFlightRef.current.add(k);
+    setCardMetaFetch({ key: k, status: "loading" });
+    const qs = new URLSearchParams({
+      media_type: card.media_type,
+      tmdb_id: String(card.tmdb_id),
+    });
+    try {
+      const r = await fetch(appUrl(`/api/swipe/card-meta?${qs.toString()}`), {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const payload = (await r.json()) as Partial<SwipeCardMeta>;
+      const overview = typeof payload.overview === "string" ? payload.overview.trim() : "";
+      const cast_top = Array.isArray(payload.cast_top)
+        ? payload.cast_top.filter((n): n is string => typeof n === "string").slice(0, 3)
+        : [];
+      const entry: SwipeCardMeta = { overview, cast_top };
+      cardMetaCacheRef.current.set(k, entry);
+      setCardMetaMap((prev) => ({ ...prev, [k]: entry }));
+      setCardMetaFetch((prev) => (prev.key === k ? { key: k, status: "idle" } : prev));
+    } catch {
+      setCardMetaFetch((prev) => (prev.key === k ? { key: k, status: "error" } : prev));
+    } finally {
+      cardMetaInFlightRef.current.delete(k);
+    }
+  }, []);
+
+  const handleToggleCardMeta = useCallback(
+    (card: DeckCard) => {
+      setCardMetaExpanded((prev) => {
+        const next = !prev;
+        if (next) {
+          void ensureCardMeta(card);
+        }
+        return next;
+      });
+    },
+    [ensureCardMeta],
+  );
 
   async function act(action: "like" | "reject", card: DeckCard) {
     if (actBusyRef.current) return;
@@ -812,18 +889,6 @@ function SwipeDeck() {
         }
         toast({ title: errMsg || "Ação inválida", kind: "error" });
         return;
-      }
-      if (
-        !legacySwipeRef.current &&
-        !partnerOnline &&
-        streamSessionId &&
-        swipeActor
-      ) {
-        toast({
-          title: "Você votou!",
-          description: "Os votos dela serão comparados quando ela entrar na sessão.",
-          kind: "info",
-        });
       }
       if (j.state === "matched") {
         haptic([20, 40, 30]);
@@ -1311,6 +1376,11 @@ function SwipeDeck() {
                   reduce={Boolean(reduce)}
                   onLike={() => act("like", card)}
                   onReject={() => act("reject", card)}
+                  meta={isTop ? currentMeta : undefined}
+                  metaLoading={isTop && currentMetaLoading}
+                  metaError={isTop && currentMetaError}
+                  metaExpanded={isTop ? cardMetaExpanded : false}
+                  onToggleMeta={() => handleToggleCardMeta(card)}
                 />
               );
             })}
@@ -1410,6 +1480,11 @@ function Card({
   reduce,
   onLike,
   onReject,
+  meta,
+  metaLoading,
+  metaError,
+  metaExpanded,
+  onToggleMeta,
 }: {
   card: DeckCard;
   depth: number;
@@ -1417,6 +1492,11 @@ function Card({
   reduce: boolean;
   onLike: () => void;
   onReject: () => void;
+  meta?: SwipeCardMeta;
+  metaLoading: boolean;
+  metaError: boolean;
+  metaExpanded: boolean;
+  onToggleMeta: () => void;
 }) {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-220, 0, 220], [-14, 0, 14]);
@@ -1450,6 +1530,50 @@ function Card({
       <div className="swipe-card-body">
         <span className="swipe-card-chip">{card.media_type === "movie" ? "Filme" : "Série"}</span>
         <h2 className="swipe-card-title">{card.title}</h2>
+        <button
+          type="button"
+          className={cx("swipe-card-meta-toggle", metaExpanded && "is-open")}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMeta();
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          aria-expanded={metaExpanded}
+        >
+          {metaExpanded ? "Ocultar sinopse e elenco" : "Ver sinopse e elenco"}
+        </button>
+        {metaExpanded ? (
+          <div className="swipe-card-meta-panel" onPointerDown={(e) => e.stopPropagation()}>
+            {metaLoading && !meta ? (
+              <p className="swipe-card-meta-loading">Carregando detalhes…</p>
+            ) : metaError && !meta ? (
+              <p className="swipe-card-meta-loading">Não foi possível carregar os detalhes.</p>
+            ) : meta ? (
+              <>
+                {meta.overview ? (
+                  <p className="swipe-card-overview">{meta.overview}</p>
+                ) : null}
+                {meta.cast_top.length ? (
+                  <div className="swipe-card-cast">
+                    <span className="swipe-card-cast-label">Elenco:</span>
+                    <div className="swipe-card-cast-list">
+                      {meta.cast_top.map((name) => (
+                        <span key={name} className="swipe-card-cast-chip">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {!meta.overview && !meta.cast_top.length ? (
+                  <p className="swipe-card-meta-loading">Sem detalhes extras deste título.</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="swipe-card-meta-loading">Carregando detalhes…</p>
+            )}
+          </div>
+        ) : null}
       </div>
       {isTop && (
         <>

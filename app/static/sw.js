@@ -1,6 +1,6 @@
 /* Service Worker — PWA: escopo /; estáticos em cache; API e HTML sem cache de dados. */
-/* v4-pwa.2: ícone PWA (claquete) e botão Instalar no drawer. */
-var STATIC_CACHE = "nossa-lista-static-v4-pwa-2";
+/* v4-pwa.3: swipe card-meta sem race (cache em ref, fetch on-click). */
+var STATIC_CACHE = "nossa-lista-static-v4-pwa-3";
 var PRECACHE_URLS = [
   "/static/style.css",
   "/static/app.js",
